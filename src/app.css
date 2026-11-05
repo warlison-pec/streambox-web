@@ -1,0 +1,50 @@
+:root{
+  --orange:#ff7a00; --orange-soft:#ff9a3d; --black:#0a0a0a; --surface:#141414; --surface2:#1e1e1e; --surface3:#2a2a2a;
+  --text:#f2f2f2; --muted:#9a9a9a; --ok:#34c77b; --bad:#ff5a5f;
+  --r:12px; --ease:cubic-bezier(.2,.8,.2,1);
+  --pad:40px; --rail:96px;
+  --font: "Poppins", Inter, "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--black);color:var(--text);font:15px/1.5 var(--font);-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+button,input,select{font:inherit;color:inherit}
+img{display:block}
+::selection{background:rgba(255,122,0,.4)}
+:focus-visible{outline:3px solid var(--orange);outline-offset:2px;border-radius:10px}
+::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#2a2a2a;border-radius:10px}::-webkit-scrollbar-track{background:transparent}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.eyebrow{color:var(--orange);font-size:12px;font-weight:700;letter-spacing:.14em;text-transform:uppercase}
+h1,h2,h3{margin:0;letter-spacing:-.02em}
+.page{padding:24px var(--pad) 60px}
+.page-title{font-size:30px;font-weight:800;margin-bottom:6px}
+
+/* botões */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:44px;padding:0 20px;border-radius:10px;border:0;cursor:pointer;
+  font-weight:600;background:var(--surface2);color:var(--text);transition:transform .15s var(--ease),filter .2s,background .2s;white-space:nowrap}
+.btn:hover{background:var(--surface3)}
+.btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn.primary{background:var(--orange);color:#000}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.sm{height:36px;padding:0 14px;font-size:14px}
+.btn.block{width:100%}
+.btn svg{width:20px;height:20px}
+.chip{height:36px;padding:0 16px;border-radius:99px;border:0;background:var(--surface2);cursor:pointer;font-weight:600;font-size:14px;white-space:nowrap;transition:background .2s}
+.chip:hover{background:var(--surface3)}
+.chip.on{background:var(--orange);color:#000}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.field{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted);font-weight:600}
+.input{height:48px;padding:0 14px;border-radius:10px;border:1px solid var(--surface3);background:var(--surface);outline:0;font-size:15px;width:100%;transition:border-color .2s,box-shadow .2s}
+.input:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(255,122,0,.18)}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.12);border-top-color:var(--orange);animation:spin .8s linear infinite}
+.center{display:grid;place-items:center;min-height:50vh;text-align:center;gap:14px;color:var(--muted)}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fade{from{opacity:0}}
+@keyframes up{from{opacity:0;transform:translateY(10px)}}
+.section{margin-top:28px}
+.section h2{font-size:22px;font-weight:700;margin:0 0 12px}
+.note{font-size:13px;color:var(--muted)}
+.ok{color:var(--ok)} .bad{color:var(--bad)}
+@media (max-width:900px){:root{--pad:16px}.page-title{font-size:24px}}

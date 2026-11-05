@@ -1,0 +1,5 @@
+#!/bin/sh
+# Lido pelo entrypoint do nginx antes de gerar a configuração.
+# Serviço desativado (variável vazia) -> aponta para uma porta morta; a página nem chama.
+export INDEXER_UPSTREAM="${INDEXER_URL:-http://127.0.0.1:9}"
+export SEERR_UPSTREAM="${SEERR_URL:-http://127.0.0.1:9}"

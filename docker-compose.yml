@@ -1,0 +1,21 @@
+# StreamBox Web
+# network_mode: host -> o nginx alcança Jellyfin, indexador e Seerr em 127.0.0.1,
+# do mesmo jeito que o cloudflared do servidor.
+services:
+  streambox-web:
+    build: .
+    image: streambox-web:latest
+    container_name: streambox-web
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      LISTEN_PORT: "8095"
+      JELLYFIN_URL: "http://127.0.0.1:8096"
+      INDEXER_URL: "http://127.0.0.1:8794"     # deixe vazio para desativar
+      SEERR_URL: "http://127.0.0.1:5055"       # deixe vazio para desativar
+      STREAMBOX_TITLE: "StreamBox"
+      ADMIN_WHATSAPP: "5593991807963"
+      ADMIN_WHATSAPP_LABEL: "(93) 99180-7963"
+      DOWNLOADS_ENABLED: "1"
+    volumes:
+     - /home/warlison/streambox/streambox/dist:/srv/downloads:ro

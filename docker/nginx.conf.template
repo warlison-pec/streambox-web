@@ -1,0 +1,70 @@
+# StreamBox Web: arquivos da página + proxies no mesmo domínio (sem CORS, sem conteúdo misto)
+map $http_upgrade $sb_connection { default upgrade; '' close; }
+map $http_x_forwarded_proto $sb_proto { default $http_x_forwarded_proto; '' $scheme; }
+
+server {
+    listen ${LISTEN_PORT};
+    server_name _;
+    root /usr/share/nginx/html;
+    client_max_body_size 50m;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml application/manifest+json;
+
+    # Página (SPA)
+    location = /config.js { add_header Cache-Control "no-cache"; }
+    location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable"; try_files $uri =404; }
+    location / { add_header Cache-Control "no-cache"; try_files $uri /index.html; }
+
+    # Downloads públicos: pasta do servidor montada em /srv/downloads (somente leitura)
+    location = /downloads { return 302 /#/downloads; }
+    location = /downloads/ { return 302 /#/downloads; }
+    location /downloads/files/ {
+        alias /srv/downloads/;
+        autoindex on;
+        autoindex_format json;
+        disable_symlinks off;
+        add_header Cache-Control "no-cache";
+        add_header X-Content-Type-Options nosniff;
+        types { application/vnd.android.package-archive apk; application/zip zip; application/octet-stream exe msi bin; application/pdf pdf; text/plain txt md; }
+        default_type application/octet-stream;
+    }
+
+    # A interface web original do Jellyfin fica escondida neste domínio
+    location ^~ /api/web { return 404; }
+
+    # Jellyfin (API, imagens, vídeo, HLS, websocket)
+    location /api/ {
+        proxy_pass ${JELLYFIN_URL}/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $sb_connection;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $sb_proto;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
+    }
+
+    # STRM Indexer (busca/solicitação, TV ao vivo M3U e repasse dos canais)
+    location /strm-api/ {
+        proxy_pass ${INDEXER_UPSTREAM}/strm-api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+    }
+
+    # Seerr / Jellyseerr (cookie da sessão fica restrito a /seerr/)
+    location /seerr/ {
+        proxy_pass ${SEERR_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $sb_proto;
+        proxy_cookie_path / /seerr/;
+    }
+}
