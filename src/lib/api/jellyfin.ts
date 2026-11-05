@@ -109,6 +109,8 @@ export const jf = {
     });
     return out;
   },
+  /** Todos os episódios da série, em ordem (temporadas e episódios). */
+  seriesEpisodes: async (seriesId: string) => (await items(`/Shows/${seriesId}/Episodes`, { userId: uid(), fields: FIELDS })).Items,
   /** Episódio seguinte (passa para a próxima temporada quando acaba a atual). */
   async nextEpisode(ep: Item): Promise<Item | null> {
     if (ep.Type !== 'Episode' || !ep.SeriesId) return null;

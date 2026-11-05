@@ -2,7 +2,7 @@
   import Hls from 'hls.js';
   import { untrack } from 'svelte';
   import Icon from '../lib/components/Icon.svelte';
-  import { jf, media, friendly, episodeLabel, authHeader } from '../lib/api/jellyfin';
+  import { jf, img, media, friendly, episodeLabel, authHeader } from '../lib/api/jellyfin';
   import { indexer } from '../lib/api/extras';
   import { session, QUALITIES, SUB_SIZES, SUB_COLORS, SUB_BGS, CONFIG } from '../lib/session.svelte';
   import { back } from '../lib/router.svelte';
@@ -40,6 +40,16 @@
   let source = $state<MediaSource | null>(null);
   let isHls = $state(false);
   let triedHls = false;
+  // TV ao vivo: reconecta sozinho quando o sinal cai (até 4 vezes seguidas)
+  let reconnects = 0;
+  let stallTimer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;           // player fechado: não reconecta mais
+  let pendingRestart = false;   // já tem uma reconexão agendada
+  let userPaused = false;       // pausa feita pelo usuário (a única que o player respeita no ao vivo)
+  function restartLive() {
+    if (mode === 'jf-live') return startJellyfinLive().catch((e) => fail(friendly(e)));
+    return playRemote(m3uUrl);
+  }
   let started = false;
   let method = 'DirectStream';
   let audioIndex = $state<number | null>(null);
@@ -56,6 +66,21 @@
   let nextLeft = $state(10);               // contagem regressiva do cartão
   let skipped = $state<MediaSegment | null>(null);
   let overlaySel = $state(0);
+
+  // Episódios da série: ⏮/⏭ e a lista que abre com ↓
+  let episodes = $state<Item[]>([]);
+  let prevEp = $state<Item | null>(null);
+  let epsOpen = $state(false);
+  let epSel = $state(0);
+  let epsBox = $state<HTMLDivElement>();
+  const season = $derived.by(() => {
+    if (!item) return [] as Item[];
+    const same = episodes.filter((e) => e.SeasonId === item!.SeasonId);
+    return same.length ? same : episodes;
+  });
+  // Aviso do avanço/recuo pelas setas
+  let osd = $state('');
+  let osdTimer: ReturnType<typeof setTimeout> | undefined;
   const SKIP_LABEL: Record<string, string> = { Intro: 'Pular abertura', Recap: 'Pular resumo', Preview: 'Pular prévia', Commercial: 'Pular comercial', Outro: 'Pular créditos' };
   const T = 10_000_000;
   const outro = $derived(segments.find((s) => s.Type === 'Outro'));
@@ -83,7 +108,10 @@
     isHls = true;
     if (Hls.isSupported()) {
       hls = new Hls({
-        startPosition: start || -1, maxBufferLength: 30, backBufferLength: 60, enableWorker: true, lowLatencyMode: live,
+        startPosition: start || -1, maxBufferLength: 30, backBufferLength: 60, enableWorker: true, lowLatencyMode: false,
+        // ao vivo: fica um pouco atrás do "ao vivo" para não travar e insiste mais antes de desistir
+        ...(live ? { liveSyncDurationCount: 4, liveMaxLatencyDurationCount: 12, maxBufferLength: 20,
+          manifestLoadingMaxRetry: 4, levelLoadingMaxRetry: 6, fragLoadingMaxRetry: 6, fragLoadingRetryDelay: 800 } : {}),
         // listas e pedaços do Jellyfin sem a chave na URL recebem o cabeçalho de autorização
         xhrSetup: (xhr, u) => {
           const same = u.startsWith(location.origin + CONFIG.jellyfin + '/') || u.startsWith(CONFIG.jellyfin + '/');
@@ -135,6 +163,22 @@
       startVodHls(video.currentTime || 0);
       return;
     }
+    // Ao vivo: nunca desiste sozinho. Reconecta com espera crescente (até 15 s entre tentativas)
+    if (live && !closed) {
+      if (pendingRestart) return;
+      pendingRestart = true;
+      reconnects++;
+      error = '';
+      waiting = true;
+      toast.show(reconnects <= 3 ? 'Sinal perdido. Reconectando…' : `Sem sinal. Tentando de novo (${reconnects})…`);
+      setTimeout(() => {
+        pendingRestart = false;
+        if (closed) return;
+        userPaused = false;
+        Promise.resolve(restartLive()).catch((e) => fail(friendly(e)));
+      }, Math.min(1500 * reconnects, 15000));
+      return;
+    }
     error = msg;
     waiting = false;
   }
@@ -165,6 +209,11 @@
   async function loadExtras(it: Item) {
     item = it;
     segments = await jf.segments(it).catch(() => []);
+    if (it.Type === 'Episode' && it.SeriesId) {
+      episodes = await jf.seriesEpisodes(it.SeriesId).catch(() => []);
+      const i = episodes.findIndex((e) => e.Id === it.Id);
+      if (i >= 0) { prevEp = episodes[i - 1] ?? null; next = episodes[i + 1] ?? null; return; }
+    }
     next = await jf.nextEpisode(it).catch(() => null);
   }
 
@@ -179,8 +228,41 @@
     const n = next;
     if (!n) return;
     next = null;
+    goEpisode(n, true);
+  }
+
+  /** Abre outro episódio (continua de onde parou, se estava pela metade). */
+  function goEpisode(ep: Item, fromStart = false) {
+    epsOpen = false;
+    const played = ep.UserData?.Played;
     // troca a rota sem empilhar histórico: "Voltar" continua levando para a página da série
-    location.replace(`#/play/${n.Id}?start=0`);
+    location.replace(`#/play/${ep.Id}` + (fromStart || played ? '?start=0' : ''));
+  }
+
+  function openEpisodes() {
+    if (!season.length) return;
+    epSel = Math.max(0, season.findIndex((e) => e.Id === item?.Id));
+    epsOpen = true;
+    menu = null;
+  }
+  $effect(() => {
+    // mantém o episódio destacado visível na fileira
+    if (!epsOpen || !epsBox) return;
+    epsBox.querySelectorAll('.ep')[epSel]?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  });
+
+  /** ←/→: recua/avança 10 s (segurando a tecla, 30 s por vez), com aviso na tela. */
+  let seekTarget = -1;
+  let seekReset: ReturnType<typeof setTimeout> | undefined;
+  function seekBy(forward: boolean, held: boolean) {
+    if (live || !video) return;
+    const step = held ? 30 : 10;
+    const base = seekTarget >= 0 ? seekTarget : video.currentTime;
+    seekTarget = Math.max(0, Math.min((duration || Infinity) - 1, base + (forward ? step : -step)));
+    video.currentTime = seekTarget;
+    osd = (forward ? '⏩  ' : '⏪  ') + clock(seekTarget) + (duration ? '  /  ' + clock(duration) : '');
+    clearTimeout(osdTimer); osdTimer = setTimeout(() => (osd = ''), 1500);
+    clearTimeout(seekReset); seekReset = setTimeout(() => (seekTarget = -1), 900);
   }
 
   // Contagem regressiva do próximo episódio (pausa junto com o vídeo)
@@ -214,16 +296,20 @@
     const run = mode === 'vod' ? startVod() : mode === 'jf-live' ? startJellyfinLive() : playRemote(m3uUrl);
     Promise.resolve(run).catch((e) => fail(friendly(e)));
     const t = setInterval(() => { if (started && !live) report('progress'); }, 10_000);
+    const dog = live ? setInterval(liveWatchdog, 2000) : undefined;
     const onFs = () => (fullscreen = !!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFs);
     const onUnload = () => report('stopped');
     addEventListener('pagehide', onUnload);
     return () => {
       clearInterval(t);
+      clearInterval(dog);
       document.removeEventListener('fullscreenchange', onFs);
       removeEventListener('pagehide', onUnload);
       report('stopped');
       if (liveStreamId) jf.closeLiveStream(liveStreamId).catch(() => {});
+      clearTimeout(stallTimer);
+      closed = true;            // fechou o player: não tenta reconectar
       destroyEngines();
       if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     };
@@ -318,9 +404,32 @@
   function poke() {
     showUi = true;
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if (playing && !menu) showUi = false; }, 3200);
+    hideTimer = setTimeout(() => { if (playing && !menu && !epsOpen) showUi = false; }, 3200);
   }
-  const toggle = () => (video.paused ? video.play() : video.pause());
+  const toggle = () => {
+    if (video.paused) { userPaused = false; video.play().catch(() => {}); }
+    else { userPaused = true; video.pause(); }
+  };
+
+  /* Ao vivo: o vídeo não pode ficar parado sem o usuário pedir.
+     - pausou sozinho (fim do buffer, aba voltando, erro passageiro) → volta a tocar;
+     - congelou com vídeo no buffer à frente → pula o buraco para perto do ao vivo;
+     - congelou sem nada para tocar por ~20 s → reconecta a fonte. */
+  let lastTime = -1;
+  let frozen = 0;
+  function liveWatchdog() {
+    if (closed || error || pendingRestart || userPaused || !video) { frozen = 0; return; }
+    if (video.paused && video.readyState >= 2) video.play().catch(() => {});
+    const t = video.currentTime;
+    frozen = t === lastTime ? frozen + 2 : 0;
+    lastTime = t;
+    if (frozen >= 4) {
+      const b = video.buffered;
+      const end = b.length ? b.end(b.length - 1) : 0;
+      if (end - t > 1.5) { video.currentTime = end - 1; video.play().catch(() => {}); return; }
+    }
+    if (frozen >= 20) { frozen = 0; fail('O canal parou de responder'); }
+  }
   const seek = (d: number) => { if (!live) video.currentTime = Math.max(0, Math.min(duration || Infinity, video.currentTime + d)); poke(); };
   function toggleFs() {
     if (document.fullscreenElement) document.exitFullscreen();
@@ -328,6 +437,17 @@
   }
   function onKey(e: KeyboardEvent) {
     poke();
+    // Lista de episódios aberta: ←/→ escolhe, Enter abre, ↑/Esc fecha
+    if (epsOpen) {
+      const n = season.length;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); epSel = Math.max(0, epSel - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); epSel = Math.min(n - 1, epSel + 1); }
+      else if (e.key === 'Enter') { e.preventDefault(); const ep = season[epSel]; if (ep && ep.Id !== item?.Id) goEpisode(ep); else epsOpen = false; }
+      else if (e.key === 'ArrowUp' || e.key === 'Escape' || e.key === 'ArrowDown') { e.preventDefault(); if (e.key !== 'ArrowDown') epsOpen = false; }
+      return;
+    }
+    if (e.key === 'MediaTrackNext' && next) { e.preventDefault(); goEpisode(next); return; }
+    if (e.key === 'MediaTrackPrevious' && prevEp) { e.preventDefault(); goEpisode(prevEp); return; }
     if (e.key === 'Escape') { if (menu) { menu = null; e.preventDefault(); } else if (!document.fullscreenElement) back(); return; }
     if ((e.target as HTMLElement)?.closest?.('.menu')) return;
     // Enter/OK aciona o botão de pular ou o cartão do próximo episódio; ←/→ escolhe no cartão
@@ -338,10 +458,18 @@
     }
     switch (e.key) {
       case ' ': case 'k': e.preventDefault(); toggle(); break;
-      case 'ArrowLeft': e.preventDefault(); seek(-10); break;
-      case 'ArrowRight': e.preventDefault(); seek(30); break;
+      case 'ArrowLeft': case 'ArrowRight': {
+        // em cima de um botão dos controles, as setas só navegam; no resto, avançam/recuam
+        const t = e.target as HTMLElement;
+        if (t?.tagName === 'INPUT') return;
+        e.preventDefault(); seekBy(e.key === 'ArrowRight', e.repeat); break;
+      }
       case 'ArrowUp': e.preventDefault(); volume = Math.min(1, volume + 0.1); break;
-      case 'ArrowDown': e.preventDefault(); volume = Math.max(0, volume - 0.1); break;
+      case 'ArrowDown':
+        e.preventDefault();
+        if (season.length) openEpisodes();            // série: ↓ abre a lista de episódios
+        else volume = Math.max(0, volume - 0.1);
+        break;
       case 'f': toggleFs(); break;
       case 'm': muted = !muted; break;
       case 'c': menu = menu === 'subs' ? null : 'subs'; break;
@@ -364,11 +492,16 @@
     ondblclick={toggleFs}
     onplay={() => { playing = true; poke(); }}
     onpause={() => { playing = false; showUi = true; if (started) report('progress'); }}
-    onplaying={() => { waiting = false; error = ''; if (!started && mode === 'vod') { started = true; report('start'); } }}
-    onwaiting={() => (waiting = true)}
+    onplaying={() => { waiting = false; error = ''; reconnects = 0; clearTimeout(stallTimer); if (!started && mode === 'vod') { started = true; report('start'); } }}
+    onwaiting={() => {
+      waiting = true;
+      // ao vivo travado por muito tempo: reconecta (a fonte pode ter mudado ou caído)
+      clearTimeout(stallTimer);
+      if (live) stallTimer = setTimeout(() => { if (waiting && !error) fail('O canal parou de responder'); }, 15000);
+    }}
     ontimeupdate={() => { current = video.currentTime; const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0; }}
     ondurationchange={() => (duration = Number.isFinite(video.duration) ? video.duration : 0)}
-    onended={() => { if (!live) { if (next && !nextDismissed) playNext(); else { report('stopped'); back(); } } }}
+    onended={() => { if (live) { fail('A transmissão foi interrompida'); return; } if (!live) { if (next && !nextDismissed) playNext(); else { report('stopped'); back(); } } }}
     onerror={() => fail('O navegador não conseguiu abrir este vídeo')}
   >
     {#if source && mode === 'vod'}
@@ -401,6 +534,27 @@
     <button class="pill primary skip sel" class:lifted={showUi} onclick={skip}>{SKIP_LABEL[skipSeg.Type] ?? 'Pular'} <Icon name="right" size={18} /></button>
   {/if}
 
+  {#if osd}<div class="osd">{osd}</div>{/if}
+
+  {#if epsOpen}
+    <div class="eps" role="dialog" aria-label="Episódios">
+      <div class="eps-head">
+        <strong>{item?.SeriesName}{item?.ParentIndexNumber != null ? ` · Temporada ${item.ParentIndexNumber}` : ''}</strong>
+        <button class="icon" aria-label="Fechar" onclick={() => (epsOpen = false)}><Icon name="close" size={22} /></button>
+      </div>
+      <div class="eps-row" bind:this={epsBox}>
+        {#each season as ep, i (ep.Id)}
+          {@const cur = ep.Id === item?.Id}
+          <button class="ep" class:sel={i === epSel} class:cur onmouseenter={() => (epSel = i)} onclick={() => (cur ? (epsOpen = false) : goEpisode(ep))}>
+            <span class="thumb">{#if img.landscape(ep)}<img src={img.landscape(ep)} alt="" loading="lazy" />{/if}</span>
+            <small>E{String(ep.IndexNumber ?? 0).padStart(2, '0')}{cur ? ' · ASSISTINDO' : ep.UserData?.Played ? ' · ✓ visto' : ''}</small>
+            <span class="nm">{ep.Name}</span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <header class="top">
     <button class="icon" aria-label="Voltar" onclick={back}><Icon name="back" size={26} /></button>
     <div class="ttl"><strong>{title}</strong>{#if subtitle}<span>{subtitle}</span>{/if}{#if live}<span class="live">● AO VIVO</span>{/if}</div>
@@ -410,7 +564,7 @@
     <button class="bigplay" aria-label="Reproduzir" onclick={toggle}><Icon name="play" size={46} /></button>
   {/if}
 
-  <footer class="bottom">
+  <footer class="bottom" class:under={epsOpen}>
     {#if !live}
       <div class="seek">
         <div class="track"><i class="buf" style={`width:${duration ? (buffered / duration) * 100 : 0}%`}></i><i class="pos" style={`width:${duration ? (current / duration) * 100 : 0}%`}></i></div>
@@ -418,10 +572,12 @@
       </div>
     {/if}
     <div class="ctrls">
+      {#if prevEp}<button class="icon" aria-label="Episódio anterior" title="Episódio anterior" onclick={() => prevEp && goEpisode(prevEp)}><Icon name="prev" size={26} /></button>{/if}
       <button class="icon" aria-label={playing ? 'Pausar' : 'Reproduzir'} onclick={toggle}><Icon name={playing ? 'pause' : 'play'} size={30} /></button>
+      {#if next && mode === 'vod'}<button class="icon" aria-label="Próximo episódio" title="Próximo episódio" onclick={() => next && goEpisode(next)}><Icon name="next" size={26} /></button>{/if}
       {#if !live}
         <button class="icon" aria-label="Voltar 10 segundos" onclick={() => seek(-10)}><Icon name="rew" size={26} /></button>
-        <button class="icon" aria-label="Avançar 30 segundos" onclick={() => seek(30)}><Icon name="fwd" size={26} /></button>
+        <button class="icon" aria-label="Avançar 10 segundos" onclick={() => seek(10)}><Icon name="fwd" size={26} /></button>
         <span class="time">{clock(current)} / {clock(duration)}</span>
       {/if}
       <div class="vol">
@@ -429,6 +585,7 @@
         <input type="range" min="0" max="1" step="0.05" bind:value={volume} aria-label="Volume" />
       </div>
       <span class="grow"></span>
+      {#if season.length}<button class="icon" aria-label="Episódios" title="Episódios (↓)" onclick={openEpisodes}><Icon name="list" /></button>{/if}
       <button class="icon" class:on={activeSub >= 0} aria-label="Legendas" title="Legendas (C)" onclick={() => (menu = menu === 'subs' ? null : 'subs')}><Icon name="subtitles" /></button>
       {#if mode === 'vod'}
         <button class="icon" aria-label="Áudio" title="Áudio" onclick={() => (menu = menu === 'audio' ? null : 'audio')}><Icon name="audio" /></button>
@@ -478,12 +635,26 @@
 
 <style>
   .player{position:fixed;inset:0;z-index:100;background:#000;color:#fff;overflow:hidden}
+  .osd{position:absolute;top:40px;left:50%;transform:translateX(-50%);z-index:4;padding:10px 22px;border-radius:24px;background:rgba(0,0,0,.8);font-size:20px;font-weight:700;pointer-events:none}
+  .eps{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:60px 0 26px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.92) 30%,rgba(0,0,0,.97))}
+  .eps-head{display:flex;align-items:center;justify-content:space-between;padding:0 40px 10px}
+  .eps-head strong{font-size:18px}
+  .eps-row{display:flex;gap:12px;overflow-x:auto;padding:6px 40px 10px;scrollbar-width:none}
+  .eps-row::-webkit-scrollbar{display:none}
+  .ep{flex:none;width:230px;padding:8px;border-radius:12px;border:3px solid transparent;background:transparent;color:#fff;text-align:left;cursor:pointer;display:flex;flex-direction:column;gap:6px}
+  .ep.cur{background:rgba(255,122,0,.13)}
+  .ep.sel{border-color:var(--orange);background:rgba(255,255,255,.12)}
+  .ep .thumb{display:block;aspect-ratio:16/9;border-radius:8px;overflow:hidden;background:#1e1e1e}
+  .ep .thumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .ep small{color:var(--orange);font-weight:700;font-size:12px;letter-spacing:.04em}
+  .ep .nm{font-size:14px;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .player.hideui{cursor:none}
   video{width:100%;height:100%;object-fit:contain;background:#000}
   .top,.bottom{position:absolute;left:0;right:0;transition:opacity .3s,transform .3s;z-index:2}
   .top{top:0;display:flex;align-items:center;gap:14px;padding:18px 24px 50px;background:linear-gradient(180deg,rgba(0,0,0,.75),transparent)}
   .bottom{bottom:0;padding:50px 24px 18px;background:linear-gradient(0deg,rgba(0,0,0,.85),transparent)}
   .hideui .top{opacity:0;transform:translateY(-10px);pointer-events:none}
+  .bottom.under{opacity:0;pointer-events:none}
   .hideui .bottom{opacity:0;transform:translateY(10px);pointer-events:none}
   .ttl{display:flex;flex-direction:column;line-height:1.25}
   .ttl strong{font-size:20px}
