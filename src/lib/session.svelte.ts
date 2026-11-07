@@ -13,11 +13,12 @@ export interface Settings {
   epg: string;
   seerrKey: string;
   seerrUser: string;
+  hideWatched: boolean;   // tela inicial: esconder filmes e séries já assistidos (vem ligado)
 }
 
 const DEFAULTS: Settings = {
   quality: 0, subLang: 'por', subSize: 1, subColor: 0, subBg: 0, screensaver: 5,
-  m3u: '', epg: '', seerrKey: '', seerrUser: '',
+  m3u: '', epg: '', seerrKey: '', seerrUser: '', hideWatched: true,
 };
 
 export const SUB_SIZES: [string, number][] = [['Pequeno', 0.8], ['Médio', 1], ['Grande', 1.25], ['Muito grande', 1.55]];

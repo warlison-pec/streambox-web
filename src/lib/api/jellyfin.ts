@@ -59,6 +59,9 @@ async function call<T>(path: string, opts: { method?: string; query?: Record<str
 const uid = () => session.userId;
 const items = (path: string, query: Record<string, unknown>) => call<ItemsResult>(path, { query });
 
+/** Tela inicial com "ocultar assistidos" ligado: o Jellyfin já devolve só o que falta ver. */
+const unplayedOnly = () => (session.settings.hideWatched ? { isPlayed: false } : {});
+
 export const jf = {
   /* login */
   publicInfo: () => call<{ ServerName: string; Version: string }>('/System/Info/Public', { token: '' }),
@@ -83,9 +86,11 @@ export const jf = {
   nextUp: async () => (await items('/Shows/NextUp', { userId: uid(), limit: 20, fields: FIELDS, enableTotalRecordCount: false })).Items,
   featured: async (types: string, limit: number) => (await items('/Items', {
     userId: uid(), recursive: true, includeItemTypes: types, sortBy: 'Random', imageTypes: 'Backdrop', limit, fields: FIELDS, enableTotalRecordCount: false,
+    ...unplayedOnly(),
   })).Items,
   latest: async (parentId: string, types: string) => (await items('/Items', {
     userId: uid(), parentId, recursive: true, includeItemTypes: types, sortBy: 'DateCreated', sortOrder: 'Descending', limit: 20, fields: FIELDS, enableTotalRecordCount: false,
+    ...unplayedOnly(),
   })).Items,
   library: (parentId: string, types: string, start: number, limit: number, sortBy: string, desc: boolean,
     genreId?: string, years?: string, studioId?: string) => items('/Items', {
@@ -138,6 +143,7 @@ export const jf = {
   favorites: async () => (await items('/Items', {
     userId: uid(), recursive: true, filters: 'IsFavorite', includeItemTypes: 'Movie,Series',
     sortBy: 'SortName', sortOrder: 'Ascending', limit: 40, fields: FIELDS, enableTotalRecordCount: false,
+    ...unplayedOnly(),
   })).Items,
   setFavorite: (id: string, fav: boolean) => call<unknown>(`/UserFavoriteItems/${id}`, { method: fav ? 'POST' : 'DELETE', query: { userId: uid() } }),
   setPlayed: (id: string, played: boolean) => call<unknown>(`/UserPlayedItems/${id}`, { method: played ? 'POST' : 'DELETE', query: { userId: uid() } }),

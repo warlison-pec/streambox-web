@@ -73,6 +73,16 @@
   </section>
 
   <section>
+    <h2>Tela inicial</h2>
+    <p class="muted">Esconde dos destaques, da Minha lista e de "Adicionados em…" os filmes e séries que você já assistiu.</p>
+    <span class="lbl">Ocultar assistidos</span>
+    <div class="chips">
+      <button class="chip" class:on={S.hideWatched} onclick={() => session.set('hideWatched', true)}>Ligado</button>
+      <button class="chip" class:on={!S.hideWatched} onclick={() => session.set('hideWatched', false)}>Desligado</button>
+    </div>
+  </section>
+
+  <section>
     <h2>Proteção de tela</h2>
     <p class="muted">Mostra imagens do catálogo quando a página fica parada (sem nada tocando).</p>
     <div class="chips">{#each SAVERS as s}<button class="chip" class:on={S.screensaver === s[1]} onclick={() => session.set('screensaver', s[1])}>{s[0]}</button>{/each}</div>

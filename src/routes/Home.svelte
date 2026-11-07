@@ -10,8 +10,15 @@
   import { watched } from '../lib/watched.svelte';
   import { favorites } from '../lib/favorites.svelte';
   import type { Item } from '../lib/types';
+  import { session } from '../lib/session.svelte';
 
-  let data = $state<Data | null>(cache.home ?? null);
+  let loaded = $state<Data | null>(cache.home ?? null);
+  // "Ocultar assistidos" (Ajustes, vem ligado): o que for marcado como visto some na hora
+  const unseen = (l: Item[]) => (session.settings.hideWatched ? l.filter((x) => !watched.isPlayed(x)) : l);
+  const data = $derived(loaded && {
+    ...loaded, featured: unseen(loaded.featured), favs: unseen(loaded.favs),
+    latest: loaded.latest.map(([n, l]): [string, Item[]] => [n, unseen(l)]),
+  });
   let error = $state('');
 
   async function load() {
@@ -24,11 +31,11 @@
       const latest = await Promise.all(libs.map(async (v) => [v.Name, await safe(jf.latest(v.Id, itemTypesFor(v.CollectionType)!))] as [string, Item[]]));
       const featured: Item[] = [];
       for (let i = 0; i < Math.max(m.length, s.length); i++) { if (m[i]) featured.push(m[i]); if (s[i]) featured.push(s[i]); }
-      data = cache.home = { featured, resume, next, favs, latest };
-    } catch (e) { if (!data) error = friendly(e); }
+      loaded = cache.home = { featured, resume, next, favs, latest };
+    } catch (e) { if (!loaded) error = friendly(e); }
   }
   // recarrega ao abrir e sempre que algo for marcado como visto/não visto
-  $effect(() => { watched.version; favorites.version; untrack(load); });
+  $effect(() => { watched.version; favorites.version; session.settings.hideWatched; untrack(load); });
 
   /* ---------- layout: spotlight (tela larga) ou carrossel (celular) ---------- */
   const mq = matchMedia('(min-width: 901px) and (min-height: 600px)');
