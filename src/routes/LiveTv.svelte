@@ -6,18 +6,21 @@
   import type { Item, LiveChannel } from '../lib/types';
   import { hhmm } from '../lib/util';
   import { setQueue, loadLast, routeOf, liveQueue, type LiveEntry } from '../lib/liveQueue.svelte';
+  import { classify, genreOptions } from '../lib/channelGenres';
+  import FilterBar from '../lib/components/FilterBar.svelte';
+  import FilterMenu from '../lib/components/FilterMenu.svelte';
 
   // Abre o canal levando a lista visível junto (o player troca de canal sem voltar aqui)
   function openJf(ch: Item) {
     setQueue(jfShown.map((c): LiveEntry => ({
-      name: c.Name, logo: img.channel(c), number: c.ChannelNumber ?? null, jfId: c.Id,
+      name: c.Name, logo: img.channel(c), number: c.ChannelNumber ?? null, jfId: c.Id, group: classify(c.Name),
       now: c.CurrentProgram?.Name ?? null, nowStart: parse(c.CurrentProgram?.StartDate) || 0, nowEnd: parse(c.CurrentProgram?.EndDate) || 0,
     })));
     go(`/live/jf/${ch.Id}?name=${encodeURIComponent(ch.Name)}`);
   }
   function openM3u(ch: LiveChannel) {
     setQueue(m3uShown.map((c): LiveEntry => ({
-      name: c.name, logo: c.logo ?? null, number: c.number ?? null, group: c.group, url: c.url,
+      name: c.name, logo: c.logo ?? null, number: c.number ?? null, group: classify(c.name, c.group), url: c.url,
       now: c.now?.title ?? null, nowStart: c.now?.start ?? 0, nowEnd: c.now?.stop ?? 0,
       next: c.next ? `${hhmm(c.next.start)}  ${c.next.title}` : null,
     })));
@@ -33,6 +36,7 @@
   let tab = $state<'jf' | 'm3u'>('jf');
   let filter = $state('');
   let group = $state('');
+  let genre = $state('');
   let now = $state(Date.now());
   let jfList = $state<Item[] | null>(null);
   let jfError = $state('');
@@ -63,16 +67,19 @@
     for (const ch of m3u ?? []) c.set(ch.group, (c.get(ch.group) ?? 0) + 1);
     return [...c.entries()].sort((a, b) => a[0].localeCompare(b[0], 'pt-BR'));
   });
-  const m3uShown = $derived((m3u ?? []).filter((c) => (!group || c.group === group) && match(c.name)).slice(0, 1500));
-  const jfShown = $derived((jfList ?? []).filter((c) => match(c.Name)));
+  // gênero de cada canal (mesmas regras do "Organizar por categoria" do indexador)
+  const m3uGenre = $derived(new Map((m3u ?? []).map((c) => [c, classify(c.name, c.group)])));
+  const jfGenre = $derived(new Map((jfList ?? []).map((c) => [c.Id, classify(c.Name)])));
+  const m3uShown = $derived((m3u ?? []).filter((c) => (!group || c.group === group) && (!genre || m3uGenre.get(c) === genre) && match(c.name)).slice(0, 1500));
+  const jfShown = $derived((jfList ?? []).filter((c) => (!genre || jfGenre.get(c.Id) === genre) && match(c.Name)));
 </script>
 
 <div class="page">
   <h1 class="page-title">TV ao vivo</h1>
   <div class="bar">
     <div class="chips">
-      <button class="chip" class:on={tab === 'jf'} onclick={() => (tab = 'jf')}>Jellyfin</button>
-      <button class="chip" class:on={tab === 'm3u'} onclick={() => (tab = 'm3u')}>Minha lista</button>
+      <button class="chip" class:on={tab === 'jf'} onclick={() => { tab = 'jf'; genre = ''; group = ''; }}>Jellyfin</button>
+      <button class="chip" class:on={tab === 'm3u'} onclick={() => { tab = 'm3u'; genre = ''; group = ''; }}>Minha lista</button>
       {#if last}<button class="chip lastch" onclick={openLast}>▶ Último canal: {last.name}</button>{/if}
     </div>
     <input class="input" placeholder="Filtrar canais…" bind:value={filter} />
@@ -82,6 +89,9 @@
     {#if jfList === null}<div class="center"><div class="spinner"></div></div>
     {:else if !jfList.length}<p class="muted">{jfError ? 'TV ao vivo do Jellyfin indisponível: ' + jfError : 'Nenhum canal configurado no Jellyfin (Painel → TV ao vivo).'}</p>
     {:else}
+      <FilterBar>
+        <FilterMenu label="Gênero" options={genreOptions([...jfGenre.values()])} value={genre} onselect={(k) => (genre = k)} />
+      </FilterBar>
       <div class="list">
         {#each jfShown as ch (ch.Id)}
           {@const a = parse(ch.CurrentProgram?.StartDate)}
@@ -108,11 +118,14 @@
   {:else if m3u === null || (m3uLoading && !m3u.length)}
     <div class="center"><div class="spinner"></div><p>{m3uError || 'Baixando lista e guia… (a primeira vez pode demorar)'}</p></div>
   {:else}
-    <div class="chips groups">
-      <button class="chip" class:on={!group} onclick={() => (group = '')}>Todos · {m3u.length}</button>
-      {#each groups as [g, n] (g)}<button class="chip" class:on={group === g} onclick={() => (group = g)}>{g} · {n}</button>{/each}
+    <FilterBar>
+      <FilterMenu label="Gênero" options={genreOptions([...m3uGenre.values()])} value={genre} onselect={(k) => (genre = k)} />
+      {#if groups.length > 1}
+        <FilterMenu label="Grupo da lista" options={[['', `Todos · ${m3u.length}`], ...groups.map(([g, n]): [string, string] => [g, `${g} · ${n}`])]}
+          value={group} onselect={(k) => (group = k)} />
+      {/if}
       <button class="chip" onclick={() => loadM3u(true)}>{m3uLoading ? 'Atualizando…' : '↻ Atualizar'}</button>
-    </div>
+    </FilterBar>
     {#if m3uError}<p class="bad">{m3uError}</p>{/if}
     <div class="list">
       {#each m3uShown as ch (ch.id + ch.url)}
@@ -136,7 +149,6 @@
 <style>
   .bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:14px 0 18px}
   .bar .input{max-width:420px;height:40px}
-  .groups{margin-bottom:16px}
   .lastch{border-color:var(--orange);color:var(--orange)}
   .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px}
   .ch{display:flex;gap:14px;align-items:center;text-align:left;background:var(--surface);border:0;border-radius:12px;padding:10px;cursor:pointer;transition:background .2s,box-shadow .2s}

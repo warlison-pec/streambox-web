@@ -102,7 +102,7 @@
     {#if children.length}
       <div class="grid">
         {#each children as c (c.Id)}
-          <MediaCard title={c.Name} subtitle={String(c.ProductionYear ?? '')} image={img.poster(c)} progress={progress(c)} played={watched.isPlayed(c)} onclick={() => go(`/item/${c.Id}`)} />
+          <MediaCard title={c.Name} subtitle={String(c.ProductionYear ?? '')} image={img.poster(c)} rating={c.CommunityRating} progress={progress(c)} played={watched.isPlayed(c)} onclick={() => go(`/item/${c.Id}`)} />
         {/each}
       </div>
     {/if}

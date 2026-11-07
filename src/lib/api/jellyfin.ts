@@ -87,9 +87,25 @@ export const jf = {
   latest: async (parentId: string, types: string) => (await items('/Items', {
     userId: uid(), parentId, recursive: true, includeItemTypes: types, sortBy: 'DateCreated', sortOrder: 'Descending', limit: 20, fields: FIELDS, enableTotalRecordCount: false,
   })).Items,
-  library: (parentId: string, types: string, start: number, limit: number, sortBy: string, desc: boolean) => items('/Items', {
+  library: (parentId: string, types: string, start: number, limit: number, sortBy: string, desc: boolean,
+    genreId?: string, years?: string, studioId?: string) => items('/Items', {
     userId: uid(), parentId, recursive: true, includeItemTypes: types, sortBy, sortOrder: desc ? 'Descending' : 'Ascending', startIndex: start, limit, fields: FIELDS,
+    ...(genreId ? { genreIds: genreId } : {}), ...(years ? { years } : {}), ...(studioId ? { studioIds: studioId } : {}),
   }),
+  /** Estúdios/produtoras que existem na biblioteca. */
+  studios: async (parentId: string, types: string) => (await items('/Studios', {
+    userId: uid(), parentId, includeItemTypes: types, sortBy: 'SortName', sortOrder: 'Ascending', enableImages: false,
+  })).Items,
+  /** Gêneros que existem na biblioteca (vêm do TMDB, no idioma configurado no Jellyfin). */
+  genres: async (parentId: string, types: string) => (await items('/Genres', {
+    userId: uid(), parentId, includeItemTypes: types, sortBy: 'SortName', sortOrder: 'Ascending', enableImages: false,
+  })).Items,
+  /** Biblioteca inteira com país de produção e tags (filtros Anime e Dorama, que não são gênero no TMDB). */
+  libraryAll: async (parentId: string, types: string, sortBy: string, desc: boolean, years?: string, studioId?: string) => (await items('/Items', {
+    userId: uid(), parentId, recursive: true, includeItemTypes: types, sortBy, sortOrder: desc ? 'Descending' : 'Ascending',
+    fields: 'Genres,ProductionYear,ProductionLocations,Tags,PrimaryImageAspectRatio,CommunityRating', enableTotalRecordCount: false,
+    ...(years ? { years } : {}), ...(studioId ? { studioIds: studioId } : {}),
+  })).Items,
   item: (id: string) => call<Item>(`/Items/${id}`, { query: { userId: uid() } }),
 
   /** Trechos para pular: segmentos do servidor ou, na falta, capítulos "Abertura"/"Créditos". */

@@ -19,6 +19,8 @@ export interface Item {
   CommunityRating?: number;
   OfficialRating?: string;
   Genres?: string[];
+  ProductionLocations?: string[];
+  Tags?: string[];
   SeriesId?: string;
   SeriesName?: string;
   SeasonId?: string;

@@ -93,7 +93,7 @@
   {#if d.favs.some((it) => favorites.isFavorite(it))}
     <Row title="Minha lista">
       {#each d.favs.filter((it) => favorites.isFavorite(it)) as it (it.Id)}
-        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)}
+        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
           played={watched.isPlayed(it)}
           badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
           onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
@@ -104,7 +104,7 @@
     {#if list.length}
       <Row title={`Adicionados em ${name}`}>
         {#each list as it (it.Id)}
-          <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)}
+          <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
             played={watched.isPlayed(it)}
             badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
             onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />

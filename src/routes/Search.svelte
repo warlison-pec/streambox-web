@@ -99,7 +99,7 @@
       <div class="grid">
         {#each library as it (it.Id)}
           <MediaCard title={it.Name} subtitle={[isSeries(it) ? 'Série' : 'Filme', it.ProductionYear].filter(Boolean).join(' · ')}
-            image={img.poster(it)} progress={progress(it)} onclick={() => go(`/item/${it.Id}`)} />
+            image={img.poster(it)} progress={progress(it)} rating={it.CommunityRating} onclick={() => go(`/item/${it.Id}`)} />
         {/each}
       </div>
     </div>

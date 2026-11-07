@@ -718,6 +718,9 @@
 
   <header class="top" class:under={sideOpen}>
     <button class="icon" aria-label="Voltar" onclick={back}><Icon name="back" size={26} /></button>
+    {#if live && liveQueue.entries.length > 1}
+      <button class="icon" aria-label="Lista de canais" title="Lista de canais" onclick={openSide}><Icon name="list" size={24} /></button>
+    {/if}
     <div class="ttl"><strong>{title}</strong>{#if subtitle}<span>{subtitle}</span>{/if}{#if live}<span class="live">● AO VIVO</span>{/if}</div>
   </header>
 
