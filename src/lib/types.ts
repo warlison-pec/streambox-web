@@ -5,6 +5,7 @@ export interface UserData {
   PlayedPercentage?: number;
   Played?: boolean;
   UnplayedItemCount?: number;
+  IsFavorite?: boolean;
 }
 
 export interface Item {
@@ -125,6 +126,7 @@ export interface LiveChannel {
   group: string;
   logo?: string | null;
   url: string;
+  number?: string | null;
   now?: { title: string; start: number; stop: number } | null;
   next?: { title: string; start: number; stop: number } | null;
 }

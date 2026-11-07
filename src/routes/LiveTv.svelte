@@ -5,6 +5,30 @@
   import { go } from '../lib/router.svelte';
   import type { Item, LiveChannel } from '../lib/types';
   import { hhmm } from '../lib/util';
+  import { setQueue, loadLast, routeOf, liveQueue, type LiveEntry } from '../lib/liveQueue.svelte';
+
+  // Abre o canal levando a lista visível junto (o player troca de canal sem voltar aqui)
+  function openJf(ch: Item) {
+    setQueue(jfShown.map((c): LiveEntry => ({
+      name: c.Name, logo: img.channel(c), number: c.ChannelNumber ?? null, jfId: c.Id,
+      now: c.CurrentProgram?.Name ?? null, nowStart: parse(c.CurrentProgram?.StartDate) || 0, nowEnd: parse(c.CurrentProgram?.EndDate) || 0,
+    })));
+    go(`/live/jf/${ch.Id}?name=${encodeURIComponent(ch.Name)}`);
+  }
+  function openM3u(ch: LiveChannel) {
+    setQueue(m3uShown.map((c): LiveEntry => ({
+      name: c.name, logo: c.logo ?? null, number: c.number ?? null, group: c.group, url: c.url,
+      now: c.now?.title ?? null, nowStart: c.now?.start ?? 0, nowEnd: c.now?.stop ?? 0,
+      next: c.next ? `${hhmm(c.next.start)}  ${c.next.title}` : null,
+    })));
+    go(`/live/m3u?u=${encodeURIComponent(ch.url)}&name=${encodeURIComponent(ch.name)}`);
+  }
+  const last = loadLast();
+  function openLast() {
+    if (!last) return;
+    if (!liveQueue.entries.some((e) => (last.jfId && e.jfId === last.jfId) || (last.url && e.url === last.url))) setQueue([last]);
+    go(routeOf(last));
+  }
 
   let tab = $state<'jf' | 'm3u'>('jf');
   let filter = $state('');
@@ -49,6 +73,7 @@
     <div class="chips">
       <button class="chip" class:on={tab === 'jf'} onclick={() => (tab = 'jf')}>Jellyfin</button>
       <button class="chip" class:on={tab === 'm3u'} onclick={() => (tab = 'm3u')}>Minha lista</button>
+      {#if last}<button class="chip lastch" onclick={openLast}>▶ Último canal: {last.name}</button>{/if}
     </div>
     <input class="input" placeholder="Filtrar canais…" bind:value={filter} />
   </div>
@@ -61,7 +86,7 @@
         {#each jfShown as ch (ch.Id)}
           {@const a = parse(ch.CurrentProgram?.StartDate)}
           {@const b = parse(ch.CurrentProgram?.EndDate)}
-          <button class="ch" onclick={() => go(`/live/jf/${ch.Id}?name=${encodeURIComponent(ch.Name)}`)}>
+          <button class="ch" onclick={() => openJf(ch)}>
             <span class="logo">{ch.Name.slice(0, 2)}{#if img.channel(ch)}<img src={img.channel(ch)} alt="" loading="lazy" />{/if}</span>
             <span class="txt">
               <strong>{[ch.ChannelNumber, ch.Name].filter(Boolean).join('  ')}</strong>
@@ -91,10 +116,10 @@
     {#if m3uError}<p class="bad">{m3uError}</p>{/if}
     <div class="list">
       {#each m3uShown as ch (ch.id + ch.url)}
-        <button class="ch" onclick={() => go(`/live/m3u?u=${encodeURIComponent(ch.url)}&name=${encodeURIComponent(ch.name)}`)}>
+        <button class="ch" onclick={() => openM3u(ch)}>
           <span class="logo">{ch.name.slice(0, 2)}{#if ch.logo}<img src={ch.logo} alt="" loading="lazy" referrerpolicy="no-referrer" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}</span>
           <span class="txt">
-            <strong>{ch.name}</strong>
+            <strong>{[ch.number, ch.name].filter(Boolean).join('  ')}</strong>
             {#if ch.now}
               <small>Agora: {ch.now.title}  ·  {hhmm(ch.now.start)} – {hhmm(ch.now.stop)}</small>
               <i class="bar2"><b style={`width:${pct(ch.now.start, ch.now.stop)}%`}></b></i>
@@ -112,6 +137,7 @@
   .bar{display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:14px 0 18px}
   .bar .input{max-width:420px;height:40px}
   .groups{margin-bottom:16px}
+  .lastch{border-color:var(--orange);color:var(--orange)}
   .list{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:10px}
   .ch{display:flex;gap:14px;align-items:center;text-align:left;background:var(--surface);border:0;border-radius:12px;padding:10px;cursor:pointer;transition:background .2s,box-shadow .2s}
   .ch:hover,.ch:focus-visible{background:var(--surface2);box-shadow:0 0 0 2px var(--orange);outline:none}

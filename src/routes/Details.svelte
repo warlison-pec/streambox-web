@@ -6,6 +6,7 @@
   import type { Item } from '../lib/types';
   import { initials } from '../lib/util';
   import { watched } from '../lib/watched.svelte';
+  import { favorites } from '../lib/favorites.svelte';
 
   let { id }: { id: string } = $props();
   let item = $state<Item | null>(null);
@@ -85,6 +86,9 @@
           {#if item.Type !== 'BoxSet'}
             <button class="btn" class:seen={watched.isPlayed(item)} onclick={toggleItem}>
               <Icon name="check" />{watched.isPlayed(item) ? (isSeries(item) ? 'Série assistida' : 'Assistido') : isSeries(item) ? 'Marcar série como vista' : 'Marcar como visto'}
+            </button>
+            <button class="btn" class:seen={favorites.isFavorite(item)} onclick={() => favorites.toggle(item!)}>
+              <Icon name={favorites.isFavorite(item) ? 'bookmark' : 'bookmarkAdd'} />{favorites.isFavorite(item) ? 'Na Minha lista' : 'Minha lista'}
             </button>
           {/if}
         </div>

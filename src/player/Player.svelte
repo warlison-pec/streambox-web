@@ -7,7 +7,8 @@
   import { session, QUALITIES, SUB_SIZES, SUB_COLORS, SUB_BGS, CONFIG } from '../lib/session.svelte';
   import { back } from '../lib/router.svelte';
   import { toast } from '../lib/toast.svelte';
-  import { clock, sleep } from '../lib/util';
+  import { clock, sleep, hhmm } from '../lib/util';
+  import { liveQueue, numberOf, routeOf, saveLast } from '../lib/liveQueue.svelte';
   import type { Item, MediaSegment, MediaSource, MediaStream, RemoteSubtitle } from '../lib/types';
 
   type Mode = 'vod' | 'jf-live' | 'm3u';
@@ -81,6 +82,122 @@
   // Aviso do avanço/recuo pelas setas
   let osd = $state('');
   let osdTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /* ---------- TV ao vivo com cara de TV a cabo ---------- */
+  const chIndex = live ? liveQueue.entries.findIndex((e) => (mode === 'jf-live' ? e.jfId === id : e.url === m3uUrl)) : -1;
+  if (chIndex >= 0) saveLast(liveQueue.entries[chIndex]);
+  let infoIndex = $state(chIndex);          // canal mostrado na faixa de informação
+  let infoOn = $state(false);
+  let infoTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingIndex = -1;                    // zapping: sintoniza quando o usuário para de apertar
+  let tuneTimer: ReturnType<typeof setTimeout> | undefined;
+  let numberBuf = $state('');
+  let numberTimer: ReturnType<typeof setTimeout> | undefined;
+  let sideOpen = $state(false);
+  let sideGroups = $state<string[]>(['Todos']);
+  let sideGroup = $state(0);
+  let sideSel = $state(0);                  // posição na lista do grupo
+  let sideBox = $state<HTMLDivElement>();
+  const sideIdx = $derived.by(() => {
+    const g = sideGroups[sideGroup] ?? 'Todos';
+    return liveQueue.entries.map((_, i) => i).filter((i) => g === 'Todos' || liveQueue.entries[i].group === g);
+  });
+  const info = $derived(liveQueue.entries[infoIndex] ?? (live ? { name: title } : null));
+  let clockNow = $state(Date.now());
+
+  function showInfo(i = chIndex, sticky = false) {
+    infoIndex = i;
+    infoOn = true;
+    clockNow = Date.now();
+    clearTimeout(infoTimer);
+    if (!sticky) infoTimer = setTimeout(() => (infoOn = false), 4500);
+  }
+  function tune(i: number) {
+    const e = liveQueue.entries[i];
+    if (!e) return;
+    if (i === chIndex) { showInfo(); return; }
+    liveQueue.last = chIndex;
+    closed = true;                          // este player vai sair; não reconecta mais
+    location.replace('#' + routeOf(e));
+  }
+  function zap(delta: number) {
+    const n = liveQueue.entries.length;
+    if (n < 2) return;
+    const base = pendingIndex >= 0 ? pendingIndex : Math.max(0, chIndex);
+    pendingIndex = (((base + delta) % n) + n) % n;
+    showInfo(pendingIndex, true);
+    clearTimeout(tuneTimer);
+    tuneTimer = setTimeout(() => tune(pendingIndex), 450);
+  }
+  function typeDigit(d: string) {
+    numberBuf = (numberBuf + d).slice(-4);
+    clearTimeout(numberTimer);
+    numberTimer = setTimeout(() => {
+      const typed = numberBuf.replace(/^0+/, '') || '0';
+      numberBuf = '';
+      const list = liveQueue.entries;
+      let i = list.findIndex((e) => (e.number ?? '').replace(/^0+/, '') === typed);
+      if (i < 0) i = Number(typed) - 1;     // lista sem números: posição
+      if (i >= 0 && i < list.length) tune(i); else toast.show(`Canal ${typed} não encontrado`);
+    }, 1500);
+  }
+  function openSide() {
+    const list = liveQueue.entries;
+    if (list.length < 2) { showInfo(); return; }
+    const gs = [...new Set(list.map((e) => e.group).filter(Boolean) as string[])];
+    sideGroups = gs.length > 1 ? ['Todos', ...gs] : ['Todos'];
+    const cur = list[chIndex]?.group;
+    sideGroup = sideGroups.length > 1 && cur ? Math.max(0, sideGroups.indexOf(cur)) : 0;
+    sideSel = Math.max(0, sideIdx.indexOf(chIndex));
+    sideOpen = true;
+    menu = null;
+    showInfo(chIndex, true);
+  }
+  function closeSide() { sideOpen = false; infoTimer = setTimeout(() => (infoOn = false), 1500); }
+  $effect(() => {
+    // mantém o canal destacado visível na lista lateral
+    if (!sideOpen || !sideBox) return;
+    sideBox.querySelectorAll('.srow')[sideSel]?.scrollIntoView({ block: 'nearest' });
+    const i = sideIdx[sideSel];
+    if (i !== undefined) untrack(() => showInfo(i, true));
+  });
+  const pctOf = (a?: number, b?: number) => (a && b && b > a ? Math.min(100, Math.max(0, ((clockNow - a) / (b - a)) * 100)) : 0);
+
+  /** Teclas da TV ao vivo. Retorna true quando a tecla foi usada. */
+  function liveKey(e: KeyboardEvent): boolean {
+    // Enter em cima de um botão dos controles: deixa o botão agir
+    if (!sideOpen && e.key === 'Enter' && (e.target as HTMLElement)?.tagName === 'BUTTON') return false;
+    if (sideOpen) {
+      const n = sideIdx.length;
+      switch (e.key) {
+        case 'ArrowUp': sideSel = Math.max(0, sideSel - 1); return true;
+        case 'ArrowDown': sideSel = Math.min(n - 1, sideSel + 1); return true;
+        case 'PageUp': sideSel = Math.max(0, sideSel - 10); return true;
+        case 'PageDown': sideSel = Math.min(n - 1, sideSel + 10); return true;
+        case 'ArrowLeft': case 'ArrowRight':
+          if (sideGroups.length > 1) {
+            sideGroup = (sideGroup + (e.key === 'ArrowRight' ? 1 : -1) + sideGroups.length) % sideGroups.length;
+            sideSel = Math.max(0, sideIdx.indexOf(chIndex));
+          }
+          return true;
+        case 'Enter': { const i = sideIdx[sideSel]; sideOpen = false; if (i !== undefined) tune(i); return true; }
+        case 'Escape': case 'Backspace': closeSide(); return true;
+      }
+      return true;
+    }
+    switch (e.key) {
+      case 'ArrowUp': case 'PageUp': case 'ChannelUp': zap(+1); return true;
+      case 'ArrowDown': case 'PageDown': case 'ChannelDown': zap(-1); return true;
+      case 'Enter': openSide(); return true;
+      case 'i': case 'Info': showInfo(); return true;
+      case 'g': case 'Guide': openSide(); return true;
+      case 'Backspace': case 'LastChannel':
+        if (liveQueue.last >= 0) { tune(liveQueue.last); toast.show('Canal anterior'); }
+        return true;
+    }
+    if (/^[0-9]$/.test(e.key)) { typeDigit(e.key); return true; }
+    return false;
+  }
   const SKIP_LABEL: Record<string, string> = { Intro: 'Pular abertura', Recap: 'Pular resumo', Preview: 'Pular prévia', Commercial: 'Pular comercial', Outro: 'Pular créditos' };
   const T = 10_000_000;
   const outro = $derived(segments.find((s) => s.Type === 'Outro'));
@@ -297,6 +414,7 @@
     Promise.resolve(run).catch((e) => fail(friendly(e)));
     const t = setInterval(() => { if (started && !live) report('progress'); }, 10_000);
     const dog = live ? setInterval(liveWatchdog, 2000) : undefined;
+    if (live) setTimeout(() => showInfo(), 400);
     const onFs = () => (fullscreen = !!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFs);
     const onUnload = () => report('stopped');
@@ -446,6 +564,8 @@
       else if (e.key === 'ArrowUp' || e.key === 'Escape' || e.key === 'ArrowDown') { e.preventDefault(); if (e.key !== 'ArrowDown') epsOpen = false; }
       return;
     }
+    // TV ao vivo: ↑/↓ troca de canal, Enter abre a lista lateral, números, Backspace = último canal
+    if (live && !menu && !(e.target as HTMLElement)?.closest?.('.menu') && liveKey(e)) { e.preventDefault(); return; }
     if (e.key === 'MediaTrackNext' && next) { e.preventDefault(); goEpisode(next); return; }
     if (e.key === 'MediaTrackPrevious' && prevEp) { e.preventDefault(); goEpisode(prevEp); return; }
     if (e.key === 'Escape') { if (menu) { menu = null; e.preventDefault(); } else if (!document.fullscreenElement) back(); return; }
@@ -535,6 +655,47 @@
   {/if}
 
   {#if osd}<div class="osd">{osd}</div>{/if}
+  {#if numberBuf}<div class="osd">Canal {numberBuf}–</div>{/if}
+
+  {#if live && infoOn && info}
+    {@const e = info as import('../lib/liveQueue.svelte').LiveEntry}
+    <div class="infobar" class:withside={sideOpen}>
+      {#if infoIndex >= 0}<span class="inum">{numberOf(infoIndex)}</span>{/if}
+      {#if e.logo}<span class="ilogo"><img src={e.logo} alt="" referrerpolicy="no-referrer" /></span>{/if}
+      <div class="itxt">
+        <div class="irow"><strong>{e.name}</strong><span class="iclock">{hhmm(clockNow)}</span></div>
+        <span class="inow">{e.now ? (e.nowStart && e.nowEnd ? `${hhmm(e.nowStart)} – ${hhmm(e.nowEnd)}   ${e.now}` : e.now) : 'Sem guia de programação'}</span>
+        {#if e.nowStart && e.nowEnd}<i class="ibar"><b style={`width:${pctOf(e.nowStart, e.nowEnd)}%`}></b></i>{/if}
+        {#if e.next}<small>A seguir: {e.next}</small>{/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if sideOpen}
+    <div class="side" role="dialog" aria-label="Canais">
+      <div class="side-head">
+        {#if sideGroups.length > 1}<button class="icon" aria-label="Grupo anterior" onclick={() => liveKey(new KeyboardEvent('keydown', { key: 'ArrowLeft' }))}><Icon name="left" size={20} /></button>{/if}
+        <strong>{sideGroups[sideGroup]} · {sideIdx.length}</strong>
+        {#if sideGroups.length > 1}<button class="icon" aria-label="Próximo grupo" onclick={() => liveKey(new KeyboardEvent('keydown', { key: 'ArrowRight' }))}><Icon name="right" size={20} /></button>{/if}
+        <span class="grow"></span>
+        <button class="icon" aria-label="Fechar" onclick={closeSide}><Icon name="close" size={20} /></button>
+      </div>
+      <div class="side-list" bind:this={sideBox}>
+        {#each sideIdx as i, k (i)}
+          {@const c = liveQueue.entries[i]}
+          <button class="srow" class:sel={k === sideSel} class:cur={i === chIndex} onmouseenter={() => (sideSel = k)} onclick={() => { sideOpen = false; tune(i); }}>
+            <span class="snum">{numberOf(i)}</span>
+            <span class="slogo">{#if c.logo}<img src={c.logo} alt="" loading="lazy" referrerpolicy="no-referrer" />{/if}</span>
+            <span class="stxt">
+              <strong>{c.name}</strong>
+              {#if i === chIndex}<small class="on">▶ ASSISTINDO{c.now ? ` · ${c.now}` : ''}</small>{:else if c.now}<small>{c.now}</small>{/if}
+              {#if c.next}<small class="nx">{c.next}</small>{/if}
+            </span>
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
 
   {#if epsOpen}
     <div class="eps" role="dialog" aria-label="Episódios">
@@ -555,7 +716,7 @@
     </div>
   {/if}
 
-  <header class="top">
+  <header class="top" class:under={sideOpen}>
     <button class="icon" aria-label="Voltar" onclick={back}><Icon name="back" size={26} /></button>
     <div class="ttl"><strong>{title}</strong>{#if subtitle}<span>{subtitle}</span>{/if}{#if live}<span class="live">● AO VIVO</span>{/if}</div>
   </header>
@@ -564,7 +725,7 @@
     <button class="bigplay" aria-label="Reproduzir" onclick={toggle}><Icon name="play" size={46} /></button>
   {/if}
 
-  <footer class="bottom" class:under={epsOpen}>
+  <footer class="bottom" class:under={epsOpen || sideOpen}>
     {#if !live}
       <div class="seek">
         <div class="track"><i class="buf" style={`width:${duration ? (buffered / duration) * 100 : 0}%`}></i><i class="pos" style={`width:${duration ? (current / duration) * 100 : 0}%`}></i></div>
@@ -574,6 +735,11 @@
     <div class="ctrls">
       {#if prevEp}<button class="icon" aria-label="Episódio anterior" title="Episódio anterior" onclick={() => prevEp && goEpisode(prevEp)}><Icon name="prev" size={26} /></button>{/if}
       <button class="icon" aria-label={playing ? 'Pausar' : 'Reproduzir'} onclick={toggle}><Icon name={playing ? 'pause' : 'play'} size={30} /></button>
+      {#if live && liveQueue.entries.length > 1}
+        <button class="icon" aria-label="Canal anterior" title="Canal anterior (↓)" onclick={() => zap(-1)}><Icon name="prev" size={26} /></button>
+        <button class="icon" aria-label="Próximo canal" title="Próximo canal (↑)" onclick={() => zap(+1)}><Icon name="next" size={26} /></button>
+        <button class="icon" aria-label="Lista de canais" title="Canais (Enter)" onclick={openSide}><Icon name="list" /></button>
+      {/if}
       {#if next && mode === 'vod'}<button class="icon" aria-label="Próximo episódio" title="Próximo episódio" onclick={() => next && goEpisode(next)}><Icon name="next" size={26} /></button>{/if}
       {#if !live}
         <button class="icon" aria-label="Voltar 10 segundos" onclick={() => seek(-10)}><Icon name="rew" size={26} /></button>
@@ -635,6 +801,34 @@
 
 <style>
   .player{position:fixed;inset:0;z-index:100;background:#000;color:#fff;overflow:hidden}
+  .infobar{position:absolute;left:40px;right:40px;bottom:28px;z-index:6;display:flex;align-items:center;gap:16px;padding:14px 22px 14px 18px;border-radius:16px;background:rgba(16,16,16,.92);pointer-events:none}
+  .inum{min-width:70px;text-align:center;color:var(--orange);font-size:34px;font-weight:800}
+  .ilogo{width:112px;height:63px;flex:none;border-radius:8px;background:#1e1e1e;display:grid;place-items:center;padding:6px 8px}
+  .ilogo img{max-width:100%;max-height:100%;object-fit:contain}
+  .itxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+  .irow{display:flex;align-items:center;gap:12px}
+  .irow strong{flex:1;font-size:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .iclock{font-weight:700;font-size:18px}
+  .inow{color:#ddd;font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ibar{display:block;height:6px;border-radius:3px;background:rgba(255,255,255,.2);margin:5px 0;overflow:hidden}
+  .ibar b{display:block;height:100%;background:var(--orange)}
+  .itxt small{color:#9a9a9a;font-size:14px}
+  .side{position:absolute;left:0;top:0;bottom:0;width:min(520px,92vw);z-index:7;display:flex;flex-direction:column;background:linear-gradient(90deg,rgba(0,0,0,.96),rgba(0,0,0,.9) 70%,rgba(0,0,0,0))}
+  .side-head{display:flex;align-items:center;gap:6px;padding:24px 20px 12px}
+  .side-head strong{font-size:18px}
+  .side-list{flex:1;overflow-y:auto;padding:0 12px 24px;scrollbar-width:none}
+  .side-list::-webkit-scrollbar{display:none}
+  .srow{display:flex;align-items:center;gap:12px;width:100%;padding:8px 10px;margin-bottom:4px;border:2px solid transparent;border-radius:10px;background:transparent;color:#fff;text-align:left;cursor:pointer}
+  .srow.cur{background:rgba(255,122,0,.15)}
+  .srow.sel{border-color:var(--orange);background:rgba(255,255,255,.12)}
+  .snum{min-width:46px;color:var(--orange);font-weight:800;font-size:16px}
+  .slogo{width:72px;height:40px;flex:none;border-radius:6px;background:#1e1e1e;display:grid;place-items:center;padding:3px 4px}
+  .slogo img{max-width:100%;max-height:100%;object-fit:contain}
+  .stxt{flex:1;min-width:0;display:flex;flex-direction:column}
+  .stxt strong{font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stxt small{font-size:13px;color:#bbb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .stxt small.on{color:var(--orange)}
+  .stxt small.nx{color:#8a8a8a;font-size:12px}
   .osd{position:absolute;top:40px;left:50%;transform:translateX(-50%);z-index:4;padding:10px 22px;border-radius:24px;background:rgba(0,0,0,.8);font-size:20px;font-weight:700;pointer-events:none}
   .eps{position:absolute;left:0;right:0;bottom:0;z-index:5;padding:60px 0 26px;background:linear-gradient(180deg,transparent,rgba(0,0,0,.92) 30%,rgba(0,0,0,.97))}
   .eps-head{display:flex;align-items:center;justify-content:space-between;padding:0 40px 10px}
@@ -654,7 +848,8 @@
   .top{top:0;display:flex;align-items:center;gap:14px;padding:18px 24px 50px;background:linear-gradient(180deg,rgba(0,0,0,.75),transparent)}
   .bottom{bottom:0;padding:50px 24px 18px;background:linear-gradient(0deg,rgba(0,0,0,.85),transparent)}
   .hideui .top{opacity:0;transform:translateY(-10px);pointer-events:none}
-  .bottom.under{opacity:0;pointer-events:none}
+  .bottom.under,.top.under{opacity:0;pointer-events:none}
+  .infobar.withside{left:min(540px,50vw)}
   .hideui .bottom{opacity:0;transform:translateY(10px);pointer-events:none}
   .ttl{display:flex;flex-direction:column;line-height:1.25}
   .ttl strong{font-size:20px}

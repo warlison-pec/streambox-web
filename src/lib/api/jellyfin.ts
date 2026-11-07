@@ -118,6 +118,12 @@ export const jf = {
     return r.Items.find((x) => x.Id !== ep.Id) ?? null;
   },
   /** Marca/desmarca como assistido (em séries e temporadas vale para todos os episódios). */
+  /** "Minha lista": filmes e séries favoritos no Jellyfin. */
+  favorites: async () => (await items('/Items', {
+    userId: uid(), recursive: true, filters: 'IsFavorite', includeItemTypes: 'Movie,Series',
+    sortBy: 'SortName', sortOrder: 'Ascending', limit: 40, fields: FIELDS, enableTotalRecordCount: false,
+  })).Items,
+  setFavorite: (id: string, fav: boolean) => call<unknown>(`/UserFavoriteItems/${id}`, { method: fav ? 'POST' : 'DELETE', query: { userId: uid() } }),
   setPlayed: (id: string, played: boolean) => call<unknown>(`/UserPlayedItems/${id}`, { method: played ? 'POST' : 'DELETE', query: { userId: uid() } }),
   children: async (parentId: string) => (await items('/Items', { userId: uid(), parentId, sortBy: 'ProductionYear,SortName', fields: FIELDS })).Items,
   seasons: async (seriesId: string) => (await items(`/Shows/${seriesId}/Seasons`, { userId: uid(), fields: FIELDS })).Items,

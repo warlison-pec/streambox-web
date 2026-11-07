@@ -8,6 +8,7 @@
   import { jf, img, episodeLabel, progress, itemTypesFor, isEpisode, isSeries, runtime, friendly } from '../lib/api/jellyfin';
   import { go } from '../lib/router.svelte';
   import { watched } from '../lib/watched.svelte';
+  import { favorites } from '../lib/favorites.svelte';
   import type { Item } from '../lib/types';
 
   let data = $state<Data | null>(cache.home ?? null);
@@ -16,18 +17,18 @@
   async function load() {
     try {
       const safe = <T,>(p: Promise<T[]>) => p.catch(() => [] as T[]);
-      const [m, s, resume, next, views] = await Promise.all([
-        safe(jf.featured('Movie', 6)), safe(jf.featured('Series', 6)), safe(jf.resume()), safe(jf.nextUp()), jf.views(),
+      const [m, s, resume, next, favs, views] = await Promise.all([
+        safe(jf.featured('Movie', 6)), safe(jf.featured('Series', 6)), safe(jf.resume()), safe(jf.nextUp()), safe(jf.favorites()), jf.views(),
       ]);
       const libs = views.filter((v) => itemTypesFor(v.CollectionType) && v.CollectionType !== 'boxsets');
       const latest = await Promise.all(libs.map(async (v) => [v.Name, await safe(jf.latest(v.Id, itemTypesFor(v.CollectionType)!))] as [string, Item[]]));
       const featured: Item[] = [];
       for (let i = 0; i < Math.max(m.length, s.length); i++) { if (m[i]) featured.push(m[i]); if (s[i]) featured.push(s[i]); }
-      data = cache.home = { featured, resume, next, latest };
+      data = cache.home = { featured, resume, next, favs, latest };
     } catch (e) { if (!data) error = friendly(e); }
   }
   // recarrega ao abrir e sempre que algo for marcado como visto/não visto
-  $effect(() => { watched.version; untrack(load); });
+  $effect(() => { watched.version; favorites.version; untrack(load); });
 
   /* ---------- layout: spotlight (tela larga) ou carrossel (celular) ---------- */
   const mq = matchMedia('(min-width: 901px) and (min-height: 600px)');
@@ -66,7 +67,7 @@
 
 <script lang="ts" module>
   import type { Item as ModItem } from '../lib/types';
-  export type Data = { featured: ModItem[]; resume: ModItem[]; next: ModItem[]; latest: [string, ModItem[]][] };
+  export type Data = { featured: ModItem[]; resume: ModItem[]; next: ModItem[]; favs: ModItem[]; latest: [string, ModItem[]][] };
   export const cache: { home?: Data } = {};
 </script>
 
@@ -86,6 +87,16 @@
       {#each d.next as it (it.Id)}
         <MediaCard landscape width={280} title={it.SeriesName ?? it.Name} subtitle={episodeLabel(it)} image={img.landscape(it)}
           played={watched.isPlayed(it)} onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+      {/each}
+    </Row>
+  {/if}
+  {#if d.favs.some((it) => favorites.isFavorite(it))}
+    <Row title="Minha lista">
+      {#each d.favs.filter((it) => favorites.isFavorite(it)) as it (it.Id)}
+        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)}
+          played={watched.isPlayed(it)}
+          badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
+          onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
       {/each}
     </Row>
   {/if}
@@ -132,6 +143,9 @@
             <Icon name="play" />{isSeries(current) ? 'Ver episódios' : (current.UserData?.PlaybackPositionTicks ?? 0) > 0 ? 'Continuar' : 'Assistir'}
           </button>
           <button class="btn" onclick={() => detailsOf(current!)}><Icon name="info" />Detalhes</button>
+          <button class="btn" class:seen={favorites.isFavorite(current)} onclick={() => favorites.toggle(current!)}>
+            <Icon name={favorites.isFavorite(current) ? 'bookmark' : 'bookmarkAdd'} />{favorites.isFavorite(current) ? 'Na Minha lista' : 'Minha lista'}
+          </button>
           <button class="btn" class:seen={watched.isPlayed(current)} onclick={() => watched.toggle(current!)}>
             <Icon name="check" />{watched.isPlayed(current) ? 'Assistido' : 'Marcar como visto'}
           </button>
