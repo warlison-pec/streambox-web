@@ -391,12 +391,21 @@
   });
   $effect(() => { if (skipSeg) overlaySel = 0; });
 
+  function closeLive() {
+    if (liveStreamId) jf.closeLiveStream(liveStreamId).catch(() => {});
+    liveStreamId = null;
+  }
+
   async function startJellyfinLive() {
     const info = await jf.playbackInfo(id, true);
     const src = info.MediaSources?.[0];
     if (!src) throw new Error('Canal sem fonte');
+    // Cada abertura soma um consumidor no Jellyfin: a que não será usada precisa ser fechada
+    if (closed) { if (src.LiveStreamId) jf.closeLiveStream(src.LiveStreamId).catch(() => {}); return; }
+    closeLive();                // reconexão: fecha a abertura anterior
     source = src;
     liveStreamId = src.LiveStreamId ?? null;
+    method = src.TranscodingUrl ? 'Transcode' : 'DirectStream';
     if (src.TranscodingUrl) return loadHls(media.absolute(src.TranscodingUrl), 0);
     if (src.IsRemote && src.Path?.startsWith('http')) return playRemote(src.Path);
     loadDirect(media.direct(id), 0);
@@ -412,12 +421,12 @@
   $effect(() => untrack(() => {
     const run = mode === 'vod' ? startVod() : mode === 'jf-live' ? startJellyfinLive() : playRemote(m3uUrl);
     Promise.resolve(run).catch((e) => fail(friendly(e)));
-    const t = setInterval(() => { if (started && !live) report('progress'); }, 10_000);
+    const t = setInterval(() => { if (started && mode !== 'm3u') report('progress'); }, 10_000);
     const dog = live ? setInterval(liveWatchdog, 2000) : undefined;
     if (live) setTimeout(() => showInfo(), 400);
     const onFs = () => (fullscreen = !!document.fullscreenElement);
     document.addEventListener('fullscreenchange', onFs);
-    const onUnload = () => report('stopped');
+    const onUnload = () => { report('stopped'); closeLive(); };
     addEventListener('pagehide', onUnload);
     return () => {
       clearInterval(t);
@@ -425,7 +434,7 @@
       document.removeEventListener('fullscreenchange', onFs);
       removeEventListener('pagehide', onUnload);
       report('stopped');
-      if (liveStreamId) jf.closeLiveStream(liveStreamId).catch(() => {});
+      closeLive();
       clearTimeout(stallTimer);
       closed = true;            // fechou o player: não tenta reconectar
       destroyEngines();
@@ -434,10 +443,10 @@
   }));
 
   function report(kind: 'start' | 'progress' | 'stopped') {
-    if (mode !== 'vod' || (!started && kind !== 'start')) return;
+    if (mode === 'm3u' || (!started && kind !== 'start')) return;   // lista própria: o Jellyfin não conhece o canal
     if (kind === 'stopped') started = false;
     jf.report(kind, {
-      ItemId: id, MediaSourceId: id, PositionTicks: Math.floor((video?.currentTime ?? 0) * 10_000_000),
+      ItemId: id, MediaSourceId: id, PositionTicks: live ? 0 : Math.floor((video?.currentTime ?? 0) * 10_000_000),
       IsPaused: video?.paused ?? true, CanSeek: true, PlayMethod: method, PlaySessionId: playSession,
     });
   }
@@ -612,7 +621,7 @@
     ondblclick={toggleFs}
     onplay={() => { playing = true; poke(); }}
     onpause={() => { playing = false; showUi = true; if (started) report('progress'); }}
-    onplaying={() => { waiting = false; error = ''; reconnects = 0; clearTimeout(stallTimer); if (!started && mode === 'vod') { started = true; report('start'); } }}
+    onplaying={() => { waiting = false; error = ''; reconnects = 0; clearTimeout(stallTimer); if (!started && mode !== 'm3u') { started = true; report('start'); } }}
     onwaiting={() => {
       waiting = true;
       // ao vivo travado por muito tempo: reconecta (a fonte pode ter mudado ou caído)

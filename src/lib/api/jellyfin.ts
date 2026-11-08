@@ -168,7 +168,7 @@ export const jf = {
   }),
   searchSubtitles: (id: string, lang: string) => call<RemoteSubtitle[]>(`/Items/${id}/RemoteSearch/Subtitles/${lang}`),
   downloadSubtitle: (id: string, subId: string) => call<void>(`/Items/${id}/RemoteSearch/Subtitles/${encodeURIComponent(subId)}`, { method: 'POST' }),
-  closeLiveStream: (liveStreamId: string) => call<void>('/LiveStreams/Close', { method: 'POST', query: { liveStreamId } }),
+  closeLiveStream: (liveStreamId: string) => call<void>('/LiveStreams/Close', { method: 'POST', query: { liveStreamId }, keepalive: true }),
   report: (kind: 'start' | 'progress' | 'stopped', body: Record<string, unknown>) =>
     call<void>(kind === 'start' ? '/Sessions/Playing' : kind === 'progress' ? '/Sessions/Playing/Progress' : '/Sessions/Playing/Stopped', {
       method: 'POST', body, keepalive: kind === 'stopped',
