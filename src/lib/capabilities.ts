@@ -91,6 +91,26 @@ export const BROWSER_PROFILE = {
   ],
 };
 
+/**
+ * TV ao vivo: o perfil antigo, que o Jellyfin entende bem para canais (HLS H.264/AAC).
+ * Com o perfil de filmes ele responde "toca direto" e fecha o canal antes de o player conectar.
+ */
+export const LIVE_BITRATE = 40_000_000;
+export const LIVE_PROFILE = {
+  MaxStreamingBitrate: LIVE_BITRATE,
+  DirectPlayProfiles: [
+    { Type: 'Video', Container: 'mp4,m4v,mov', VideoCodec: 'h264,av1,vp9', AudioCodec: 'aac,mp3,opus,flac' },
+    { Type: 'Video', Container: 'webm', VideoCodec: 'vp8,vp9,av1', AudioCodec: 'opus,vorbis' },
+  ],
+  TranscodingProfiles: [
+    { Type: 'Video', Container: 'ts', Protocol: 'hls', VideoCodec: 'h264', AudioCodec: 'aac,mp3', Context: 'Streaming', MaxAudioChannels: '2', BreakOnNonKeyFrames: true },
+  ],
+  SubtitleProfiles: [
+    { Format: 'vtt', Method: 'External' }, { Format: 'srt', Method: 'External' },
+    { Format: 'ass', Method: 'External' }, { Format: 'ssa', Method: 'External' },
+  ],
+};
+
 /** Para o diagnóstico em Ajustes / console. */
 export const capabilities = { ...has, chromium, hlsContainer: HLS.container };
 

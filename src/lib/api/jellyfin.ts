@@ -1,6 +1,6 @@
 // Cliente da API REST do Jellyfin (rotas 10.9+ / 12) — mesmas chamadas do app Android.
 import { CONFIG, session } from '../session.svelte';
-import { BROWSER_PROFILE, HLS, ORIGINAL_BITRATE } from '../capabilities';
+import { BROWSER_PROFILE, HLS, LIVE_BITRATE, LIVE_PROFILE, ORIGINAL_BITRATE } from '../capabilities';
 import type { AuthResult, Item, ItemsResult, MediaSegment, PlaybackInfo, QuickConnect, RemoteSubtitle } from '../types';
 
 export class ApiError extends Error {
@@ -162,9 +162,9 @@ export const jf = {
     method: 'POST',
     query: { userId: uid(), autoOpenLiveStream: live },
     body: {
-      UserId: uid(), MaxStreamingBitrate: ORIGINAL_BITRATE, AutoOpenLiveStream: live,
+      UserId: uid(), MaxStreamingBitrate: live ? LIVE_BITRATE : ORIGINAL_BITRATE, AutoOpenLiveStream: live,
       EnableDirectPlay: true, EnableDirectStream: true, EnableTranscoding: true,
-      DeviceProfile: BROWSER_PROFILE,
+      DeviceProfile: live ? LIVE_PROFILE : BROWSER_PROFILE,
     },
   }),
   searchSubtitles: (id: string, lang: string) => call<RemoteSubtitle[]>(`/Items/${id}/RemoteSearch/Subtitles/${lang}`),
