@@ -473,7 +473,33 @@
     for (const t of Array.from(video.textTracks)) { t.removeEventListener('cuechange', onCue); t.mode = 'disabled'; }
     if (index < 0) return;
     const el = video.querySelector<HTMLTrackElement>(`track[data-index="${index}"]`);
-    if (el) { el.track.mode = 'hidden'; el.track.addEventListener('cuechange', onCue); }
+    if (el) {
+      el.track.mode = 'hidden';
+      el.track.addEventListener('cuechange', onCue);
+      shiftCues(el.track);
+      el.addEventListener('load', () => shiftCues(el.track), { once: true });   // falas ainda chegando
+    }
+  }
+
+  // Sincronia: positivo = legenda adiantada (aparece antes); negativo = atrasada. Vale só para este vídeo.
+  const SYNC_STEP = 250;
+  let subOffset = $state(0);
+  const cueTimes = new WeakMap<TextTrackCue, [number, number]>();
+  function shiftCues(track: TextTrack) {
+    for (const c of Array.from(track.cues ?? [])) {
+      let t = cueTimes.get(c);
+      if (!t) { t = [c.startTime, c.endTime]; cueTimes.set(c, t); }
+      c.startTime = Math.max(0, t[0] - subOffset / 1000);
+      c.endTime = Math.max(0, t[1] - subOffset / 1000);
+    }
+  }
+  const syncLabel = (ms: number) =>
+    ms === 0 ? 'no tempo original' : `${ms > 0 ? 'adiantada' : 'atrasada'} ${(Math.abs(ms) / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} s`;
+  function syncSub(delta: number | null) {
+    if (activeSub < 0) { toast.show('Escolha uma legenda primeiro.'); return; }
+    subOffset = delta === null ? 0 : Math.max(-60_000, Math.min(60_000, subOffset + delta));
+    for (const t of Array.from(video.textTracks)) shiftCues(t);
+    toast.show('Legenda ' + syncLabel(subOffset));
   }
 
   async function searchOnline() {
@@ -602,6 +628,8 @@
       case 'f': toggleFs(); break;
       case 'm': muted = !muted; break;
       case 'c': menu = menu === 'subs' ? null : 'subs'; break;
+      case 'g': syncSub(SYNC_STEP); break;     // adiantar legenda
+      case 'h': syncSub(-SYNC_STEP); break;    // atrasar legenda
     }
   }
   $effect(() => { if (video) { video.volume = volume; video.muted = muted; localStorage.setItem('sb_volume', String(volume)); } });
@@ -783,6 +811,16 @@
         {/each}
         {#if mode === 'vod' && !subs.length}<p class="note">Este vídeo não tem legendas no servidor.</p>{/if}
         {#if mode === 'vod'}<button class="act" onclick={searchOnline}>Baixar legenda da internet…</button>{/if}
+        {#if activeSub >= 0}
+          <small class="lbl">Sincronia · {syncLabel(subOffset)}</small>
+          <div class="row">
+            <button onclick={() => syncSub(-1000)} title="Legenda aparece 1 s depois">Atrasar 1 s</button>
+            <button onclick={() => syncSub(-SYNC_STEP)} title="Atalho: H">Atrasar 0,25 s</button>
+            <button onclick={() => syncSub(SYNC_STEP)} title="Atalho: G">Adiantar 0,25 s</button>
+            <button onclick={() => syncSub(1000)} title="Legenda aparece 1 s antes">Adiantar 1 s</button>
+            {#if subOffset !== 0}<button onclick={() => syncSub(null)}>Original</button>{/if}
+          </div>
+        {/if}
         <button class="act" onclick={() => (menu = 'look')}>Aparência da legenda…</button>
       {:else if menu === 'online'}
         <h4>Legendas encontradas</h4>
