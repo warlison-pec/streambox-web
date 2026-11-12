@@ -40,7 +40,12 @@
 
   let source = $state<MediaSource | null>(null);
   let isHls = $state(false);
-  let triedHls = false;
+  // Etapas quando o navegador não toca: 0 = original direto; 1 = conversão copiando o que der (H.264/AAC .ts);
+  // 2 = recodifica tudo. "audio": o problema foi só o som (o vídeo pode ser copiado).
+  let hlsTier = 0;
+  let failedAudio = false;
+  let verifyAt = -1;                       // reprodução direta: confere imagem e som depois de tocar um pouco
+  let pendingStart = 0;                    // onde o vídeo deve começar (para a conversão retomar no mesmo ponto)
   // TV ao vivo: reconecta sozinho quando o sinal cai (até 4 vezes seguidas)
   let reconnects = 0;
   let stallTimer: ReturnType<typeof setTimeout> | undefined;
@@ -220,9 +225,10 @@
     video.load();
   }
 
-  function loadHls(src: string, start: number) {
+  function loadHls(src: string, start: number, converted = true) {
     destroyEngines();
-    isHls = true;
+    isHls = converted;
+    verifyAt = -1;
     if (Hls.isSupported()) {
       hls = new Hls({
         startPosition: start || -1, maxBufferLength: 30, backBufferLength: 60, enableWorker: true, lowLatencyMode: false,
@@ -253,6 +259,7 @@
   function loadDirect(src: string, start: number) {
     destroyEngines();
     isHls = false;
+    verifyAt = mode === 'vod' ? (start || 0) + 2 : -1;
     video.src = src;
     if (start) video.addEventListener('loadedmetadata', () => (video.currentTime = start), { once: true });
     video.play().catch(() => (waiting = false));
@@ -272,12 +279,15 @@
     return true;
   }
 
-  function fail(msg: string) {
-    // Vídeo do Jellyfin que o navegador não abriu: pede conversão HLS no mesmo ponto
-    if (mode === 'vod' && !isHls && !triedHls) {
-      triedHls = true;
-      toast.show('Convertendo no servidor…');
-      startVodHls(video.currentTime || 0);
+  function fail(msg: string, kind: 'audio' | 'video' | 'other' = 'other') {
+    // Vídeo do Jellyfin que o navegador não tocou: pede a conversão no mesmo ponto, primeiro copiando o que der
+    if (mode === 'vod' && hlsTier < 2) {
+      const from = hlsTier;
+      hlsTier = kind === 'video' ? 2 : hlsTier + 1;
+      if (kind === 'audio') failedAudio = true;
+      console.info('[StreamBox] reprodução falhou (' + msg + '), etapa ' + from + ' → ' + hlsTier);
+      toast.show(kind === 'audio' ? 'Convertendo só o áudio no servidor…' : 'Convertendo no servidor…');
+      startVodHls(video.currentTime || pendingStart || 0);
       return;
     }
     // Ao vivo: nunca desiste sozinho. Reconecta com espera crescente (até 15 s entre tentativas)
@@ -305,9 +315,40 @@
   function startVodHls(at: number) {
     method = 'Transcode';
     const q = QUALITIES[quality];
-    // Qualidade original e áudio padrão: usa a URL de conversão que o próprio servidor montou
-    if (q[1] === 0 && audioIndex === null && source?.TranscodingUrl) { loadHls(media.absolute(source.TranscodingUrl), at); return; }
-    loadHls(media.hls(id, playSession, q[1] || 20_000_000, q[2], audioIndex, 0, source?.Id ?? id), at);
+    // Qualidade original, áudio padrão e nada falhou: usa a conversão que o próprio servidor montou pelo perfil
+    if (q[1] === 0 && audioIndex === null && hlsTier === 0 && source?.TranscodingUrl) { loadHls(media.absolute(source.TranscodingUrl), at); return; }
+    loadHls(media.hls(id, playSession, {
+      maxBitrate: q[1], maxHeight: q[2], audioIndex, sourceId: source?.Id ?? id,
+      safe: hlsTier >= 1 && !failedAudio, full: hlsTier >= 2, audioOnlyAac: failedAudio,
+    }), at);
+  }
+
+  /** A fonte é uma lista HLS (ex.: .strm do indexador): o hls.js toca o endereço direto, sem conversão. */
+  const isHlsSource = (src: MediaSource | null) =>
+    !!src?.Container?.split(',').some((c) => ['hls', 'm3u8'].includes(c.trim().toLowerCase()));
+
+  /** Original sem conversão: arquivo direto, ou a lista HLS da fonte pelo hls.js. */
+  function startOriginal(at: number) {
+    method = 'DirectStream';
+    const src = media.direct(id, source?.Id ?? id);
+    if (isHlsSource(source) && Hls.isSupported()) loadHls(src, at, false);
+    else loadDirect(src, at);
+  }
+
+  /**
+   * O navegador às vezes "toca" o que não decodifica: imagem preta ou vídeo mudo, sem erro nenhum.
+   * Depois de 2 s tocando direto, confere e, se faltar algo, pede a conversão.
+   */
+  function verifyDirect() {
+    verifyAt = -1;
+    if (mode !== 'vod' || isHls || hlsTier > 0) return;
+    const streams = source?.MediaStreams ?? [];
+    if (streams.some((s) => s.Type === 'Video') && video.videoWidth === 0) { fail('sem imagem', 'video'); return; }
+    if (!streams.some((s) => s.Type === 'Audio')) return;
+    const v = video as HTMLVideoElement & { webkitAudioDecodedByteCount?: number; mozHasAudio?: boolean; audioTracks?: { length: number } };
+    const mute = (typeof v.webkitAudioDecodedByteCount === 'number' && v.webkitAudioDecodedByteCount === 0) ||
+      v.mozHasAudio === false || (v.audioTracks !== undefined && v.audioTracks.length === 0);
+    if (mute) fail('sem som', 'audio');
   }
 
   async function startVod() {
@@ -316,10 +357,12 @@
     subtitle = item.Type === 'Episode' ? episodeLabel(item) : item.ProductionYear ? String(item.ProductionYear) : '';
     const start = (startTicks ?? item.UserData?.PlaybackPositionTicks ?? 0) / 10_000_000;
     loadExtras(item);
+    pendingStart = start;
     const info = await jf.playbackInfo(id).catch(() => null);
     source = info?.MediaSources?.[0] ?? null;
-    // Com o perfil do navegador o servidor indica TranscodingUrl quando precisa converter
-    if (quality === 0 && !source?.TranscodingUrl) { method = 'DirectStream'; loadDirect(media.direct(id, source?.Id ?? id), start); }
+    // Com o perfil do navegador o servidor indica TranscodingUrl quando precisa converter;
+    // fonte HLS (.strm) o servidor sempre mandaria converter, mas o hls.js toca direto
+    if (quality === 0 && (!source?.TranscodingUrl || isHlsSource(source))) startOriginal(start);
     else startVodHls(start);
   }
 
@@ -537,7 +580,7 @@
   /* ------------------------------ áudio e qualidade ------------------------------ */
 
   function reloadAt(at = video.currentTime) {
-    if (QUALITIES[quality][1] === 0 && !triedHls && audioIndex === null) { method = 'DirectStream'; loadDirect(media.direct(id, source?.Id ?? id), at); }
+    if (QUALITIES[quality][1] === 0 && hlsTier === 0 && audioIndex === null && (!source?.TranscodingUrl || isHlsSource(source))) startOriginal(at);
     else startVodHls(at);
     // as faixas <track> continuam no elemento; reativa a escolhida
     if (activeSub >= 0) video.addEventListener('loadeddata', () => selectSub(activeSub), { once: true });
@@ -546,7 +589,7 @@
     menu = null;
     if (i === quality) return;
     quality = i; session.set('quality', QUALITIES[i][1]);
-    if (i === 0) triedHls = false;
+    if (i === 0) { hlsTier = 0; failedAudio = false; }
     reloadAt();
   }
   function chooseAudio(index: number) { menu = null; audioIndex = index; reloadAt(); }
@@ -656,7 +699,7 @@
       clearTimeout(stallTimer);
       if (live) stallTimer = setTimeout(() => { if (waiting && !error) fail('O canal parou de responder'); }, 15000);
     }}
-    ontimeupdate={() => { current = video.currentTime; const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0; }}
+    ontimeupdate={() => { current = video.currentTime; if (verifyAt >= 0 && current >= verifyAt) verifyDirect(); const b = video.buffered; buffered = b.length ? b.end(b.length - 1) : 0; }}
     ondurationchange={() => (duration = Number.isFinite(video.duration) ? video.duration : 0)}
     onended={() => { if (live) { fail('A transmissão foi interrompida'); return; } if (!live) { if (next && !nextDismissed) playNext(); else { report('stopped'); back(); } } }}
     onerror={() => fail('O navegador não conseguiu abrir este vídeo')}

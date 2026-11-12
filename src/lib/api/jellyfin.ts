@@ -1,5 +1,6 @@
 // Cliente da API REST do Jellyfin (rotas 10.9+ / 12) — mesmas chamadas do app Android.
 import { CONFIG, session } from '../session.svelte';
+import { BROWSER_PROFILE, HLS, ORIGINAL_BITRATE } from '../capabilities';
 import type { AuthResult, Item, ItemsResult, MediaSegment, PlaybackInfo, QuickConnect, RemoteSubtitle } from '../types';
 
 export class ApiError extends Error {
@@ -161,7 +162,7 @@ export const jf = {
     method: 'POST',
     query: { userId: uid(), autoOpenLiveStream: live },
     body: {
-      UserId: uid(), MaxStreamingBitrate: 40_000_000, AutoOpenLiveStream: live,
+      UserId: uid(), MaxStreamingBitrate: ORIGINAL_BITRATE, AutoOpenLiveStream: live,
       EnableDirectPlay: true, EnableDirectStream: true, EnableTranscoding: true,
       DeviceProfile: BROWSER_PROFILE,
     },
@@ -175,21 +176,6 @@ export const jf = {
     }).catch(() => undefined),
 };
 
-/** O que o navegador toca direto; o resto o servidor converte para HLS H.264/AAC. */
-const BROWSER_PROFILE = {
-  MaxStreamingBitrate: 40_000_000,
-  DirectPlayProfiles: [
-    { Type: 'Video', Container: 'mp4,m4v,mov', VideoCodec: 'h264,av1,vp9', AudioCodec: 'aac,mp3,opus,flac' },
-    { Type: 'Video', Container: 'webm', VideoCodec: 'vp8,vp9,av1', AudioCodec: 'opus,vorbis' },
-  ],
-  TranscodingProfiles: [
-    { Type: 'Video', Container: 'ts', Protocol: 'hls', VideoCodec: 'h264', AudioCodec: 'aac,mp3', Context: 'Streaming', MaxAudioChannels: '2', BreakOnNonKeyFrames: true },
-  ],
-  SubtitleProfiles: [
-    { Format: 'vtt', Method: 'External' }, { Format: 'srt', Method: 'External' },
-    { Format: 'ass', Method: 'External' }, { Format: 'ssa', Method: 'External' },
-  ],
-};
 
 /* imagens (públicas, com cache por tag) */
 export const img = {
@@ -228,14 +214,30 @@ export const img = {
 export const media = {
   // Jellyfin 12 não aceita mais "api_key"; o parâmetro atual é "ApiKey"
   direct: (id: string, sourceId = id) => url(`/Videos/${id}/stream`, { static: true, mediaSourceId: sourceId, deviceId: session.deviceId, ApiKey: session.token }),
-  hls: (id: string, playSessionId: string, maxBitrate = 20_000_000, maxHeight: number | null = null, audioIndex: number | null = null, start = 0, sourceId = id) =>
-    url(`/Videos/${id}/master.m3u8`, {
-      mediaSourceId: sourceId, deviceId: session.deviceId, ApiKey: session.token, playSessionId,
-      videoCodec: 'h264', audioCodec: 'aac,mp3', maxStreamingBitrate: maxBitrate,
-      videoBitRate: Math.max(maxBitrate - 192_000, 300_000), audioBitRate: 192_000,
-      maxHeight, audioStreamIndex: audioIndex, transcodingMaxAudioChannels: 2,
-      segmentContainer: 'ts', breakOnNonKeyFrames: true, startTimeTicks: start || null,
-    }),
+  /**
+   * Conversão pedida pelo player. maxBitrate 0 = qualidade original: o servidor copia vídeo e áudio que o
+   * navegador toca e só converte o resto. safe: só H.264/AAC em .ts; full: recodifica tudo (último recurso).
+   */
+  hls: (id: string, playSessionId: string, o: {
+    maxBitrate?: number; maxHeight?: number | null; audioIndex?: number | null; sourceId?: string;
+    safe?: boolean; full?: boolean; audioOnlyAac?: boolean;
+  } = {}) => {
+    const original = !o.maxBitrate;
+    const safe = o.safe || o.full || !original;
+    return url(`/Videos/${id}/master.m3u8`, {
+      mediaSourceId: o.sourceId ?? id, deviceId: session.deviceId, ApiKey: session.token, playSessionId,
+      videoCodec: safe ? 'h264' : HLS.video,
+      audioCodec: o.audioOnlyAac || o.full ? 'aac' : safe ? 'aac,mp3' : HLS.audio,
+      segmentContainer: safe ? 'ts' : HLS.container,
+      maxStreamingBitrate: original ? ORIGINAL_BITRATE : o.maxBitrate,
+      videoBitRate: original ? null : Math.max(o.maxBitrate! - 192_000, 300_000),
+      audioBitRate: 192_000,
+      maxHeight: o.maxHeight ?? null, audioStreamIndex: o.audioIndex ?? null,
+      transcodingMaxAudioChannels: safe ? 2 : HLS.maxChannels,
+      allowVideoStreamCopy: !o.full, allowAudioStreamCopy: !o.full && !o.audioOnlyAac,
+      breakOnNonKeyFrames: true,
+    });
+  },
   subtitle: (id: string, sourceId: string, index: number) =>
     url(`/Videos/${id}/${sourceId}/Subtitles/${index}/0/Stream.vtt`, { ApiKey: session.token }),
   absolute(path: string) {
