@@ -7,6 +7,7 @@
   import { initials } from '../lib/util';
   import { watched } from '../lib/watched.svelte';
   import { favorites } from '../lib/favorites.svelte';
+  import { isTv } from '../lib/tv';
 
   let { id }: { id: string } = $props();
   let item = $state<Item | null>(null);
@@ -16,16 +17,36 @@
   let episodes = $state<Item[]>([]);
   let children = $state<Item[]>([]);
   let next = $state<Item | null>(null);
+  let allEps = $state<Item[] | null>(null);   // todos os episódios: acha onde a pessoa parou em qualquer temporada
+  let mainBtn = $state<HTMLButtonElement | null>(null);
+
+  /** Onde a pessoa parou: o episódio começado mais recente; senão o primeiro não visto depois do último assistido. */
+  function resumePoint(all: Item[]): Item | null {
+    if (!all.length) return null;
+    const last = (e: Item) => e.UserData?.LastPlayedDate ?? '';
+    const started = all.filter((e) => !watched.isPlayed(e) && (e.UserData?.PlaybackPositionTicks ?? 0) > 0)
+      .sort((a, b) => (last(b) > last(a) ? 1 : last(b) < last(a) ? -1 : 0))[0];
+    if (started) return started;
+    let seen = -1;
+    all.forEach((e, i) => { if (watched.isPlayed(e) && (seen < 0 || last(e) > last(all[seen]))) seen = i; });
+    if (seen >= 0) { const after = all.slice(seen + 1).find((e) => !watched.isPlayed(e)); if (after) return after; }
+    return all.find((e) => !watched.isPlayed(e)) ?? all[0];
+  }
+  // Marcou ou desmarcou episódios: o "Continuar" acompanha
+  const resumeEp = $derived(allEps ? (watched.version, resumePoint(allEps)) : null);
 
   $effect(() => {
-    item = null; error = ''; seasons = []; episodes = []; children = []; next = null; season = null;
+    item = null; error = ''; seasons = []; episodes = []; children = []; next = null; season = null; allEps = null;
     jf.item(id).then(async (it) => {
       item = it;
       if (it.Type === 'Series') {
-        seasons = await jf.seasons(it.Id).catch(() => []);
-        next = (await jf.nextUpFor(it.Id).catch(() => undefined)) ?? null;
+        const [ss, all] = await Promise.all([jf.seasons(it.Id).catch(() => [] as Item[]), jf.seriesEpisodes(it.Id).catch(() => null)]);
+        seasons = ss; allEps = all;
+        const at = all ? resumePoint(all) : null;
+        next = at ?? (await jf.nextUpFor(it.Id).catch(() => undefined)) ?? null;
+        // Abre na temporada de onde a pessoa parou (fica fixa: não muda sozinha ao marcar episódios)
         const unwatched = seasons.find((s) => (s.UserData?.UnplayedItemCount ?? 0) > 0);
-        season = (unwatched ?? seasons[0])?.Id ?? null;
+        season = (seasons.find((s) => s.Id === at?.SeasonId) ?? unwatched ?? seasons[0])?.Id ?? null;
       } else if (it.Type === 'BoxSet') {
         children = await jf.children(it.Id).catch(() => []);
       }
@@ -50,6 +71,10 @@
     await watched.toggle(item, isSeries(item) ? episodes : []);
   }
   const pos = $derived(item?.UserData?.PlaybackPositionTicks ?? 0);
+  const target = $derived(resumeEp ?? next);
+  const resuming = $derived(!!target && !watched.isPlayed(target) && (target.UserData?.PlaybackPositionTicks ?? 0) > 0);
+  // TV: o foco já começa no botão principal (OK = assistir de onde parou)
+  $effect(() => { if (isTv && mainBtn) setTimeout(() => { try { mainBtn?.focus({ preventScroll: true }); } catch { mainBtn?.focus(); } }, 0); });
 </script>
 
 {#if item}
@@ -74,14 +99,14 @@
         </div>
         <div class="actions">
           {#if isSeries(item)}
-            <button class="btn primary" disabled={!next} onclick={() => next && go(`/play/${next.Id}`)}><Icon name="play" />Assistir {next ? episodeLabel(next).split(' ·')[0] : ''}</button>
+            <button class="btn primary" bind:this={mainBtn} onclick={() => target && go(`/play/${target.Id}`)}><Icon name="play" />{resuming ? 'Continuar' : 'Assistir'} {target ? episodeLabel(target).split(' ·')[0] : ''}</button>
           {:else if item.Type === 'BoxSet'}
             <span class="muted">{children.length} títulos nesta coleção</span>
           {:else if pos > 0}
-            <button class="btn primary" onclick={() => go(`/play/${item!.Id}`)}><Icon name="play" />Continuar</button>
+            <button class="btn primary" bind:this={mainBtn} onclick={() => go(`/play/${item!.Id}`)}><Icon name="play" />Continuar</button>
             <button class="btn" onclick={() => go(`/play/${item!.Id}?start=0`)}><Icon name="replay" />Do início</button>
           {:else}
-            <button class="btn primary" onclick={() => go(`/play/${item!.Id}`)}><Icon name="play" />Assistir</button>
+            <button class="btn primary" bind:this={mainBtn} onclick={() => go(`/play/${item!.Id}`)}><Icon name="play" />Assistir</button>
           {/if}
           {#if item.Type !== 'BoxSet'}
             <button class="btn" class:seen={watched.isPlayed(item)} onclick={toggleItem}>

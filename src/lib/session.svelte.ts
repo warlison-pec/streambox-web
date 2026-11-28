@@ -18,12 +18,15 @@ export interface Settings {
   noticeRequested: boolean; // avisar quando um pedido chegar
   notifyBrowser: boolean;   // também como notificação do navegador (aba em segundo plano)
   appHint: boolean;         // player: sugerir o app quando o navegador precisa de conversão
+  homeOrder: string[];      // ordem das fileiras do Início (chaves de homeSections.ts)
+  homeHidden: string[];     // fileiras do Início desligadas
 }
 
 const DEFAULTS: Settings = {
   quality: 0, subLang: 'por', subSize: 1, subColor: 0, subBg: 0, screensaver: 5,
   m3u: '', epg: '', seerrKey: '', seerrUser: '', hideWatched: true,
   noticeNew: true, noticeRequested: true, notifyBrowser: false, appHint: true,
+  homeOrder: [], homeHidden: [],
 };
 
 export const SUB_SIZES: [string, number][] = [['Pequeno', 0.8], ['Médio', 1], ['Grande', 1.25], ['Muito grande', 1.55]];

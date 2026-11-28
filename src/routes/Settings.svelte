@@ -5,6 +5,7 @@
   import { toast } from '../lib/toast.svelte';
   import { idle } from '../lib/idle.svelte';
   import { notices } from '../lib/notices.svelte';
+  import { HOME_SECTIONS, SECTION_LABEL, SECTION_HINT, homeOrder, type HomeSection } from '../lib/homeSections';
 
   const S = session.settings;
   let m3u = $state(S.m3u);
@@ -41,6 +42,18 @@
   async function enableBrowserNotices() {
     if (await notices.askPermission()) { session.set('notifyBrowser', true); toast.show('Notificações ligadas', 'ok'); }
     else toast.show('O navegador não permitiu as notificações.', 'bad');
+  }
+  // Fileiras do Início: ordem e quais aparecem
+  const order = $derived.by(() => { S.homeOrder; return homeOrder(); });
+  function move(i: number, d: number) {
+    const j = i + d, o = [...order];
+    if (j < 0 || j >= o.length) return;
+    [o[i], o[j]] = [o[j], o[i]];
+    session.set('homeOrder', o);
+  }
+  function toggleSection(k: HomeSection) {
+    const h = S.homeHidden.includes(k) ? S.homeHidden.filter((x) => x !== k) : [...S.homeHidden, k];
+    session.set('homeHidden', h);
   }
   function disconnectSeerr() { seerr.logout(); session.set('seerrKey', ''); session.set('seerrUser', ''); seerrMsg = 'Desconectado.'; }
 </script>
@@ -85,6 +98,20 @@
       <button class="chip" class:on={S.hideWatched} onclick={() => session.set('hideWatched', true)}>Ligado</button>
       <button class="chip" class:on={!S.hideWatched} onclick={() => session.set('hideWatched', false)}>Desligado</button>
     </div>
+    <span class="lbl">Fileiras (ligue, desligue e mude a ordem)</span>
+    <div class="sections">
+      {#each order as k, i (k)}
+        {@const on = !S.homeHidden.includes(k)}
+        <div class="sec" class:off={!on}>
+          <span class="num">{i + 1}</span>
+          <span class="sectxt"><b>{SECTION_LABEL[k]}</b>{#if SECTION_HINT[k]}<small>{SECTION_HINT[k]}</small>{/if}</span>
+          <button class="chip" disabled={i === 0} aria-label="Subir" onclick={() => move(i, -1)}>↑</button>
+          <button class="chip" disabled={i === order.length - 1} aria-label="Descer" onclick={() => move(i, 1)}>↓</button>
+          <button class="chip" class:on onclick={() => toggleSection(k)}>{on ? 'Ligada' : 'Desligada'}</button>
+        </div>
+      {/each}
+    </div>
+    <button class="btn sm" onclick={() => { session.set('homeOrder', [...HOME_SECTIONS]); session.set('homeHidden', []); }}>Ordem padrão</button>
   </section>
 
   <section>
@@ -177,4 +204,11 @@
   .preview span{font-weight:700;padding:2px 8px}
   .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .settings .btn{align-self:flex-start}
+  .sections{display:flex;flex-direction:column;gap:8px}
+  .sec{display:flex;align-items:center;gap:10px;background:var(--surface);border-radius:12px;padding:10px 14px}
+  .sec.off .sectxt b{color:var(--muted)}
+  .num{width:28px;height:28px;flex:none;border-radius:50%;background:rgba(255,122,0,.16);color:var(--orange);display:grid;place-items:center;font-weight:700;font-size:13px}
+  .sec.off .num{background:var(--surface2);color:var(--muted)}
+  .sectxt{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+  .sectxt small{color:var(--muted);font-size:13px}
 </style>

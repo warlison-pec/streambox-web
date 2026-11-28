@@ -13,6 +13,8 @@
   import { session } from '../lib/session.svelte';
   import { forYou } from '../lib/recommendations';
   import { requests } from '../lib/requests.svelte';
+  import { trending } from '../lib/trending';
+  import { homeOrder, homeShows } from '../lib/homeSections';
 
   let loaded = $state<Data | null>(cache.home ?? null);
   // "Ocultar assistidos" (Ajustes, vem ligado): o que for marcado como visto some na hora
@@ -22,7 +24,10 @@
     latest: loaded.latest.map(([n, l]): [string, Item[]] => [n, unseen(l)]),
     because: (loaded.because ?? []).map(([n, l]): [string, Item[]] => [n, l.filter((x) => !watched.isPlayed(x))]).filter(([, l]) => l.length >= 4),
     arrived: unseen(loaded.arrived ?? []),
+    trending: (loaded.trending ?? []).filter((x) => !watched.isPlayed(x)),
   });
+  // Ordem e fileiras ligadas (Ajustes → Tela inicial)
+  const order = $derived.by(() => { session.settings.homeOrder; session.settings.homeHidden; return homeOrder().filter(homeShows); });
   let error = $state('');
 
   async function load() {
@@ -37,16 +42,19 @@
       for (let i = 0; i < Math.max(m.length, s.length); i++) { if (m[i]) featured.push(m[i]); if (s[i]) featured.push(s[i]); }
       // "Para você que assistiu…" e "Seu pedido chegou" chegam depois, sem atrasar o resto da tela
       const prev = loaded;
-      loaded = cache.home = { featured, resume, next, favs, latest, because: prev?.because ?? [], arrived: prev?.arrived ?? [] };
+      loaded = cache.home = { featured, resume, next, favs, latest, because: prev?.because ?? [], arrived: prev?.arrived ?? [], trending: prev?.trending ?? [] };
       loadExtras(resume);
     } catch (e) { if (!loaded) error = friendly(e); }
   }
   async function loadExtras(resume: Item[]) {
-    const [because, arrived] = await Promise.all([forYou(resume).catch(() => []), requests.arrived().catch(() => [])]);
-    if (loaded) loaded = cache.home = { ...loaded, because, arrived };
+    const [because, arrived, hot] = await Promise.all([
+      forYou(resume).catch(() => []), requests.arrived().catch(() => []),
+      homeShows('trending') ? trending().catch(() => [] as Item[]) : Promise.resolve([] as Item[]),
+    ]);
+    if (loaded) loaded = cache.home = { ...loaded, because, arrived, trending: hot };
   }
   // recarrega ao abrir e sempre que algo for marcado como visto/não visto
-  $effect(() => { watched.version; favorites.version; requests.version; session.settings.hideWatched; untrack(load); });
+  $effect(() => { watched.version; favorites.version; requests.version; session.settings.hideWatched; session.settings.homeHidden; untrack(load); });
 
   /* ---------- layout: spotlight (tela larga) ou carrossel (celular) ---------- */
   const mq = matchMedia('(min-width: 901px) and (min-height: 600px)');
@@ -95,68 +103,87 @@
   import type { Item as ModItem } from '../lib/types';
   export type Data = {
     featured: ModItem[]; resume: ModItem[]; next: ModItem[]; favs: ModItem[]; latest: [string, ModItem[]][];
-    because?: [string, ModItem[]][]; arrived?: ModItem[];
+    because?: [string, ModItem[]][]; arrived?: ModItem[]; trending?: ModItem[];
   };
   export const cache: { home?: Data } = {};
 </script>
 
 {#snippet rows(d: Data, onspot: ((it: Item) => void) | null)}
-  {#if d.resume.length}
-    <Row title="Continuar assistindo">
-      {#each d.resume as it (it.Id)}
-        <MediaCard landscape width={280} title={isEpisode(it) ? it.SeriesName ?? it.Name : it.Name}
-          subtitle={isEpisode(it) ? episodeLabel(it) : String(it.ProductionYear ?? '')}
-          image={img.landscape(it)} progress={progress(it)} onspot={onspot ? () => onspot(it) : undefined}
-          onclick={() => go(`/play/${it.Id}`)} />
-      {/each}
-    </Row>
-  {/if}
-  {#if d.next.length}
-    <Row title="Próximos episódios">
-      {#each d.next as it (it.Id)}
-        <MediaCard landscape width={280} title={it.SeriesName ?? it.Name} subtitle={episodeLabel(it)} image={img.landscape(it)}
-          played={watched.isPlayed(it)} onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
-      {/each}
-    </Row>
-  {/if}
-  {#each d.because ?? [] as [name, list] (name)}
-    <Row title={`Para você que assistiu ${name}`}>
-      {#each list as it (it.Id)}
-        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
-          onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
-      {/each}
-    </Row>
-  {/each}
-  {#if d.arrived?.length}
-    <Row title="Seu pedido chegou">
-      {#each d.arrived as it (it.Id)}
-        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
-          played={watched.isPlayed(it)}
-          badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : 'NOVO'}
-          onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
-      {/each}
-    </Row>
-  {/if}
-  {#if d.favs.some((it) => favorites.isFavorite(it))}
-    <Row title="Minha lista">
-      {#each d.favs.filter((it) => favorites.isFavorite(it)) as it (it.Id)}
-        <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
-          played={watched.isPlayed(it)}
-          badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
-          onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
-      {/each}
-    </Row>
-  {/if}
-  {#each d.latest as [name, list] (name)}
-    {#if list.length}
-      <Row title={`Adicionados em ${name}`}>
+  <!-- Fileiras na ordem escolhida em Ajustes → Tela inicial -->
+  {#each order as sec (sec)}
+    {#if sec === 'resume'}
+    {#if d.resume.length}
+      <Row title="Continuar assistindo">
+        {#each d.resume as it (it.Id)}
+          <MediaCard landscape width={280} title={isEpisode(it) ? it.SeriesName ?? it.Name : it.Name}
+            subtitle={isEpisode(it) ? episodeLabel(it) : String(it.ProductionYear ?? '')}
+            image={img.landscape(it)} progress={progress(it)} onspot={onspot ? () => onspot(it) : undefined}
+            onclick={() => go(`/play/${it.Id}`)} />
+        {/each}
+      </Row>
+    {/if}
+    {:else if sec === 'next'}
+    {#if d.next.length}
+      <Row title="Próximos episódios">
+        {#each d.next as it (it.Id)}
+          <MediaCard landscape width={280} title={it.SeriesName ?? it.Name} subtitle={episodeLabel(it)} image={img.landscape(it)}
+            played={watched.isPlayed(it)} onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+        {/each}
+      </Row>
+    {/if}
+    {:else if sec === 'trending'}
+    {#if d.trending?.length}
+      <Row title="Em alta">
+        {#each d.trending as it (it.Id)}
+          <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
+            onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+        {/each}
+      </Row>
+    {/if}
+    {:else if sec === 'because'}
+    {#each d.because ?? [] as [name, list] (name)}
+      <Row title={`Para você que assistiu ${name}`}>
         {#each list as it (it.Id)}
+          <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
+            onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+        {/each}
+      </Row>
+    {/each}
+    {:else if sec === 'arrived'}
+    {#if d.arrived?.length}
+      <Row title="Seu pedido chegou">
+        {#each d.arrived as it (it.Id)}
+          <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
+            played={watched.isPlayed(it)}
+            badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : 'NOVO'}
+            onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+        {/each}
+      </Row>
+    {/if}
+    {:else if sec === 'favorites'}
+    {#if d.favs.some((it) => favorites.isFavorite(it))}
+      <Row title="Minha lista">
+        {#each d.favs.filter((it) => favorites.isFavorite(it)) as it (it.Id)}
           <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
             played={watched.isPlayed(it)}
             badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
             onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
         {/each}
       </Row>
+    {/if}
+    {:else if sec === 'latest'}
+    {#each d.latest as [name, list] (name)}
+      {#if list.length}
+        <Row title={`Adicionados em ${name}`}>
+          {#each list as it (it.Id)}
+            <MediaCard width={160} title={it.Name} subtitle={String(it.ProductionYear ?? '')} image={img.poster(it)} rating={it.CommunityRating}
+              played={watched.isPlayed(it)}
+              badge={(it.UserData?.UnplayedItemCount ?? 0) > 0 && !watched.isPlayed(it) ? String(it.UserData?.UnplayedItemCount) : ''}
+              onspot={onspot ? () => onspot(it) : undefined} onclick={() => go(`/item/${it.Id}`)} />
+          {/each}
+        </Row>
+      {/if}
+    {/each}
     {/if}
   {/each}
   <div style="height:48px"></div>

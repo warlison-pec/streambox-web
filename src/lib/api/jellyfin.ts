@@ -164,6 +164,21 @@ export const jf = {
   children: async (parentId: string) => (await items('/Items', { userId: uid(), parentId, sortBy: 'ProductionYear,SortName', fields: FIELDS })).Items,
   seasons: async (seriesId: string) => (await items(`/Shows/${seriesId}/Seasons`, { userId: uid(), fields: FIELDS })).Items,
   episodes: async (seriesId: string, seasonId: string) => (await items(`/Shows/${seriesId}/Episodes`, { userId: uid(), seasonId, fields: FIELDS })).Items,
+  /** Procura um filme ou série pelo código do TMDB (não depende do nome que o Jellyfin deu). */
+  findByTmdb: async (tmdbId: number, kind: 'movie' | 'series') => (await items('/Items', {
+    userId: uid(), recursive: true, includeItemTypes: kind === 'series' ? 'Series' : 'Movie',
+    anyProviderIdEquals: `Tmdb.${tmdbId}`, limit: 5, fields: FIELDS + ',ProviderIds',
+  })).Items.find((i) => i.ProviderIds?.Tmdb === String(tmdbId)) ?? null,
+  /** Lançamentos recentes mais bem avaliados do catálogo (nota do TMDB/IMDb que o Jellyfin guarda). */
+  topRatedRecent: async (sinceYear: number, limit = 40) => {
+    const years: number[] = [];
+    for (let y = sinceYear; y <= new Date().getFullYear(); y++) years.push(y);
+    return (await items('/Items', {
+      userId: uid(), recursive: true, includeItemTypes: 'Movie,Series', years: years.join(','),
+      minCommunityRating: 6.5, sortBy: 'CommunityRating,DateCreated', sortOrder: 'Descending',
+      isPlayed: false, limit, fields: FIELDS, enableTotalRecordCount: false,
+    })).Items;
+  },
   nextUpFor: async (seriesId: string) => (await items('/Shows/NextUp', { userId: uid(), seriesId, limit: 1, fields: FIELDS })).Items[0],
   search: async (searchTerm: string) => (await items('/Items', {
     userId: uid(), searchTerm, recursive: true, includeItemTypes: 'Movie,Series', limit: 40, fields: FIELDS,

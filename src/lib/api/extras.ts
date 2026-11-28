@@ -82,6 +82,11 @@ export const seerr = {
     const r = await json<{ results: SeerrRequest[] }>(await sr(`/request?take=${take}&sort=added&requestedBy=${me.id}`));
     return r.results.filter((x) => x.requestedBy?.id === me.id);
   },
+  /** O que está em alta no TMDB agora (filmes e séries), pela página "Descobrir" do Seerr. */
+  trending: async (page = 1) => {
+    const r = await json<{ results: SeerrResult[] }>(await sr(`/discover/trending?page=${page}&language=pt-BR`));
+    return r.results.filter((x) => x.mediaType === 'movie' || x.mediaType === 'tv');
+  },
   details: async (type: 'movie' | 'tv', tmdbId: number) => json<SeerrResult>(await sr(`/${type}/${tmdbId}?language=pt-BR`)),
   poster: (r: SeerrResult) => (r.posterPath ? `https://image.tmdb.org/t/p/w342${r.posterPath}` : null),
 };

@@ -4,6 +4,7 @@
 // - As teclas do controle Samsung (códigos próprios) viram as teclas que o site já entende.
 // - Campos de texto só abrem o teclado da TV com OK (senão ele aparece a cada passada do foco).
 import { router, back } from './router.svelte';
+import { toast } from './toast.svelte';
 import './tv.css';
 
 const TV_UA = /Tizen|SMART-TV|SmartTV|Web0S|webOS|NetCast|HbbTV|BRAVIA|VIDAA/i;
@@ -168,18 +169,53 @@ function onKey(e: KeyboardEvent) {
       // Menu aberto: o Voltar só fecha o menu (cada um fecha com o próprio Escape)
       if (Array.from(document.querySelectorAll(POPUP)).some(shown)) return;
       if (router.path !== '/') back();
-      else exitApp();                                         // Voltar no Início fecha o app da TV
+      else askExit();                 // Voltar duas vezes no Início pergunta se quer fechar o app da TV
       return;
     }
   }
 }
 
+type TizenApp = { tizen?: { application?: { getCurrentApplication(): { exit(): void } } } };
+const canExit = () => !!(window as unknown as TizenApp).tizen?.application;
+
 /** Fecha o app da TV (só funciona dentro do app instalado). */
 function exitApp() {
-  try {
-    const t = (window as unknown as { tizen?: { application?: { getCurrentApplication(): { exit(): void } } } }).tizen;
-    t?.application?.getCurrentApplication().exit();
-  } catch { /* navegador comum: não faz nada */ }
+  try { (window as unknown as TizenApp).tizen?.application?.getCurrentApplication().exit(); }
+  catch { /* navegador comum: não faz nada */ }
+}
+
+let lastBack = 0;
+/** 1º Voltar no Início avisa; o 2º (em até 2,5 s) pergunta se quer fechar. */
+function askExit() {
+  if (!canExit()) return;                       // no navegador não há o que fechar
+  const now = Date.now();
+  if (now - lastBack > 2500) { lastBack = now; toast.show('Aperte Voltar de novo para sair', 'info', 2500); return; }
+  lastBack = 0;
+  const before = document.activeElement as HTMLElement | null;
+  const box = document.createElement('div');
+  box.className = 'tv-exit';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.innerHTML = '<div class="tv-exit-card"><h2>Fechar o StreamBox?</h2><p>O app será fechado. Voltar mantém você aqui.</p>' +
+    '<div class="tv-exit-actions"><button class="btn" data-a="stay">Continuar</button><button class="btn primary" data-a="exit">Sair</button></div></div>';
+  const close = () => {
+    box.removeEventListener('keydown', onBoxKey);
+    box.remove();
+    if (before && document.contains(before)) focusEl(before);
+  };
+  const onBoxKey = (e: KeyboardEvent) => {
+    if (e.key === 'Escape' || e.key === 'Backspace') { e.preventDefault(); e.stopPropagation(); close(); }
+  };
+  box.addEventListener('keydown', onBoxKey);
+  box.addEventListener('click', (e) => {
+    const a = (e.target as HTMLElement).closest('button')?.getAttribute('data-a');
+    if (a === 'exit') exitApp();
+    else if (a === 'stay' || e.target === box) close();
+  });
+  document.body.appendChild(box);
+  // OK já confirma: a pessoa apertou Voltar duas vezes de propósito
+  const sair = box.querySelector('[data-a=exit]') as HTMLElement | null;
+  if (sair) focusEl(sair);
 }
 
 /** Ao trocar de tela, leva o foco para o começo do conteúdo. */

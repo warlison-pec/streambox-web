@@ -19,3 +19,12 @@ html.tv body { overflow-x: hidden; }
 /* Navegador sem gap em flex: rótulo (texto) e campo dos formulários */
 html.no-flexgap .field > input, html.no-flexgap .field > select, html.no-flexgap .field > textarea { margin-top: 6px; }
 html.no-flexgap .brand > .logo { margin-right: 12px; }
+
+/* Voltar duas vezes no Início: "Fechar o StreamBox?" (sem gap/inset: TVs com Chromium 56) */
+.tv-exit { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 1000; background: rgba(0,0,0,.7);
+  display: flex; align-items: center; justify-content: center; }
+.tv-exit-card { width: 460px; max-width: 90vw; background: var(--surface); border-radius: 18px; padding: 28px; text-align: center; }
+.tv-exit-card h2 { font-size: 24px; font-weight: 800; margin: 0 0 10px; }
+.tv-exit-card p { color: var(--muted); margin: 0 0 22px; }
+.tv-exit-actions { display: flex; justify-content: center; }
+.tv-exit-actions .btn { margin: 0 8px; min-width: 150px; justify-content: center; }
