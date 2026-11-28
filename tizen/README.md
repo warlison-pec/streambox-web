@@ -58,9 +58,27 @@ Quem reinstalar por outro caminho precisa desinstalar antes: certificados difere
 - Nos campos de texto, o teclado da TV só abre ao apertar **OK**; **Voltar** fecha o teclado.
 - **Voltar** na tela inicial fecha o app.
 
-## Ajude a testar
+## Status dos Testes
 
-Instale na sua TV e conte como foi numa [issue no GitHub](https://github.com/warlison-pec/streambox-web/issues),
+| Funcionalidade | Status | Última Atualização | Testado por |
+|---|---|---|---|
+| Inicialização do app | Pendente | - | - |
+| Login com usuário/senha | Pendente | - | - |
+| Conexão rápida | Pendente | - | - |
+| Navegação por setas | Pendente | - | - |
+| Foco durante navegação | Pendente | - | - |
+| Reprodução de filmes | Pendente | - | - |
+| Reprodução de episódios | Pendente | - | - |
+| Play/Pause | Pendente | - | - |
+| Avançar/Voltar | Pendente | - | - |
+| TV ao vivo (canais) | Pendente | - | - |
+| Troca de canal | Pendente | - | - |
+| Lista de canais | Pendente | - | - |
+| Interface sem problemas | Pendente | - | - |
+
+## Como relatar testes
+
+Instale na sua TV e preencha o [template de relatório de testes](TEST_TEMPLATE.md) ou comente numa [issue no GitHub](https://github.com/warlison-pec/streambox-web/issues),
 informando o **modelo e o ano da TV** (Configurações → Suporte → Sobre esta TV). O que mais importa:
 
 1. O app abre e o login funciona (usuário e senha ou **Conexão rápida**)?
